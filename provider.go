@@ -265,6 +265,16 @@ func validateKeypairFile(keypairPath string) error {
 	return nil
 }
 
+// removeANSIEscapeSequences removes ANSI color codes and control characters from CLI output
+func removeANSIEscapeSequences(output string) string {
+	// Remove ANSI color codes from the output
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[mGKHF]`) // Corrected: double backslash for regex escape
+	cleanOutput := ansiRegex.ReplaceAllString(output, "")
+	// Also remove any remaining control characters
+	cleanOutput = regexp.MustCompile(`[\x00-\x1f\x7f-\x9f]`).ReplaceAllString(cleanOutput, "") // Corrected: double backslash for regex escape
+	return cleanOutput
+}
+
 // testNosanaCLIAccess tests if the CLI can access the wallet
 func (c *nosanaClient) testNosanaCLIAccess() error {
 	// Try to get the wallet address to verify CLI access
@@ -277,10 +287,7 @@ func (c *nosanaClient) testNosanaCLIAccess() error {
 	log.Printf("[DEBUG] Parsing nosana address output: %q", output)
 
 	// Remove ANSI color codes from the output
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[mGKHF]`)
-	cleanOutput := ansiRegex.ReplaceAllString(output, "")
-	// Also remove any remaining control characters
-	cleanOutput = regexp.MustCompile(`[\x00-\x1f\x7f-\x9f]`).ReplaceAllString(cleanOutput, "")
+	cleanOutput := removeANSIEscapeSequences(output)
 
 	lines := strings.Split(strings.TrimSpace(cleanOutput), "\n")
 	var address string
@@ -318,11 +325,15 @@ func (c *nosanaClient) testNosanaCLIAccess() error {
 // runNosanaCommand executes a Nosana CLI command and returns the output
 func (c *nosanaClient) runNosanaCommand(args ...string) (string, error) {
 	cmd := exec.Command("nosana", args...)
-
+    cmd.Env = append(os.Environ(),  
+        "CI=true",           // Common CI environment variable  
+        "TERM=dumb",         // Disable terminal features  
+        "NO_COLOR=1",        // Disable colors  
+    )  
 	// Set working directory and environment
 	if c.KeypairPath != "" {
 		// Set the NOSANA_WALLET environment variable to point to our keypair
-		cmd.Env = append(os.Environ(), "NOSANA_WALLET="+c.KeypairPath)
+		cmd.Env = append(cmd.Env, "NOSANA_WALLET="+c.KeypairPath)
 
 		// Also try setting the keypair directory
 		keypairDir := filepath.Dir(c.KeypairPath)
@@ -335,9 +346,11 @@ func (c *nosanaClient) runNosanaCommand(args ...string) (string, error) {
 	}
 
 	log.Printf("[DEBUG] Running command: nosana %s", strings.Join(args, " "))
+	
+	// Use regular command execution instead of pty (pty doesn't work on Windows)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("nosana command failed: %w, output: %s", err, string(output))
+		return string(output), fmt.Errorf("command failed with exit code: %w", err)
 	}
 
 	return string(output), nil

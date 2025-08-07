@@ -4,6 +4,6 @@
 provider "localhost/hoomandigital/nosana" {
   version = "1.0.0"
   hashes = [
-    "h1:GkhEqO0buNXDO/mf8Q0s5Ikj2OJ075EC1Cz115IU4fM=",
+    "h1:ULw3HlashNsUCsW65nf1vvTrq0ZzbNoqyUmbLaA+dqE=",
   ]
 }
