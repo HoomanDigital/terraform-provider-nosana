@@ -325,11 +325,11 @@ func (c *nosanaClient) testNosanaCLIAccess() error {
 // runNosanaCommand executes a Nosana CLI command and returns the output
 func (c *nosanaClient) runNosanaCommand(args ...string) (string, error) {
 	cmd := exec.Command("nosana", args...)
-    cmd.Env = append(os.Environ(),  
-        "CI=true",           // Common CI environment variable  
-        "TERM=dumb",         // Disable terminal features  
-        "NO_COLOR=1",        // Disable colors  
-    )  
+	cmd.Env = append(os.Environ(),
+		"CI=true",    // Common CI environment variable
+		"TERM=dumb",  // Disable terminal features
+		"NO_COLOR=1", // Disable colors
+	)
 	// Set working directory and environment
 	if c.KeypairPath != "" {
 		// Set the NOSANA_WALLET environment variable to point to our keypair
@@ -346,7 +346,7 @@ func (c *nosanaClient) runNosanaCommand(args ...string) (string, error) {
 	}
 
 	log.Printf("[DEBUG] Running command: nosana %s", strings.Join(args, " "))
-	
+
 	// Use regular command execution instead of pty (pty doesn't work on Windows)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

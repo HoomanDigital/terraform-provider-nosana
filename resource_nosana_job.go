@@ -198,7 +198,6 @@ func extractJobIDFromOutput(output string) string {
 	return ""
 }
 
-
 // isBase58Like checks if a string looks like base58 encoding
 func isBase58Like(s string) bool {
 	base58Regex := regexp.MustCompile(`^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$`) // Corrected: no unnecessary escaping
