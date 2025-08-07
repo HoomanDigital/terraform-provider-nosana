@@ -7,39 +7,31 @@ terraform {
 }
 
 # Variables for provider configuration
-variable "wallet_address" {
-  description = "The Solana wallet address for Nosana authentication"
+variable "keypair_path" {
+  description = "Path to Nosana keypair file"
   type        = string
-  default     = "mock-wallet-address-for-testing"
-}
-
-variable "signed_challenge" {
-  description = "A signed message from the Phantom wallet for authentication"
-  type        = string
-  sensitive   = true
-  default     = "mock-signed-challenge-for-testing"
+  default     = ""  # Uses default ~/.nosana/nosana_key.json
 }
 
 variable "network" {
   description = "The Nosana network to connect to"
   type        = string
-  default     = "devnet"
+  default     = "mainnet"
+}
+
+variable "market_address" {
+  description = "Default market address for job submissions"
+  type        = string
+  default     = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"  # Example market from docs
 }
 
 provider "nosana" {
-  # SETUP INSTRUCTIONS:
-  # 1. Get your wallet address from Phantom wallet (44 character string)
-  # 2. Sign a challenge message with your Phantom wallet
-  # 3. Set environment variables in PowerShell:
-  #    $env:TF_VAR_wallet_address = "your_wallet_address_from_phantom"
-  #    $env:TF_VAR_signed_challenge = "your_signed_challenge_message"
-  #
-  # The provider will use these variables via Terraform variable substitution
-  # DO NOT put real credentials directly in this file!
+  # 🚀 OUT-OF-THE-BOX CONFIGURATION
+  # Just set environment variable: $env:NOSANA_PRIVATE_KEY = "your_phantom_wallet_private_key"
+  # The provider automatically handles keypair setup!
   
-  wallet_address    = var.wallet_address
-  signed_challenge  = var.signed_challenge
-  network          = var.network
+  network        = var.network
+  market_address = var.market_address
 }
 
 resource "nosana_job" "ollama_server" {
@@ -77,7 +69,7 @@ resource "nosana_job" "ollama_server" {
   })
 
   wait_for_completion = false
-  completion_timeout_seconds = 600
+  completion_timeout_seconds = 60
 }
 
 output "job_id" {

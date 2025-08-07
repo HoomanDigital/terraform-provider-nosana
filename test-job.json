@@ -1,0 +1,17 @@
+{
+  "ops": [
+    {
+      "id": "test",
+      "args": {
+        "image": "ubuntu",
+        "gpu": false
+      },
+      "type": "container/run"
+    }
+  ],
+  "meta": {
+    "trigger": "test"
+  },
+  "type": "container",
+  "version": "0.1"
+}

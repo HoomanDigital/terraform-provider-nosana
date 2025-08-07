@@ -6,6 +6,8 @@ A Terraform provider for managing Nosana jobs on the Nosana Network.
 
 - **Go 1.21+** - [Download Go](https://golang.org/dl/)
 - **Terraform 1.0+** - [Download Terraform](https://www.terraform.io/downloads.html)
+- **Node.js/npm** - [Download Node.js](https://nodejs.org/) (for Nosana CLI)
+- **Nosana CLI** - Install with: `npm install -g @nosana/cli`
 - **Git** - For version control
 
 ## Quick Start
@@ -83,8 +85,22 @@ chmod +x dev.sh
 
 ## Configuration
 
-### Using Mock Data (Default)
-The provider works out of the box with mock data for testing:
+### Setup Nosana CLI
+First, install and configure the Nosana CLI:
+
+```bash
+# Install the Nosana CLI
+npm install -g @nosana/cli
+
+# Initialize your wallet (creates ~/.nosana/nosana_key.json)
+nosana address
+
+# Fund your wallet with SOL and NOS tokens
+# Visit https://dashboard.nosana.com/ for more info
+```
+
+### Using with Default Settings
+The provider works with the default Nosana CLI configuration:
 
 **Windows:**
 ```powershell
@@ -96,23 +112,23 @@ The provider works out of the box with mock data for testing:
 ./dev.sh apply
 ```
 
-### Using Real Credentials
-Set environment variables with your actual Nosana credentials:
+### Using Custom Configuration
+Set environment variables to customize the configuration:
 
 **Windows:**
 ```powershell
-$env:TF_VAR_wallet_address = "your_wallet_address"
-$env:TF_VAR_signed_challenge = "your_signed_challenge"
+$env:TF_VAR_keypair_path = "C:\path\to\your\keypair.json"  # Optional
 $env:TF_VAR_network = "mainnet"  # or "devnet"
+$env:TF_VAR_market_address = "your_preferred_market_address"
 
 .\dev.ps1 apply
 ```
 
 **Linux/macOS:**
 ```bash
-export TF_VAR_wallet_address="your_wallet_address"
-export TF_VAR_signed_challenge="your_signed_challenge"
+export TF_VAR_keypair_path="/path/to/your/keypair.json"  # Optional
 export TF_VAR_network="mainnet"  # or "devnet"
+export TF_VAR_market_address="your_preferred_market_address"
 
 ./dev.sh apply
 ```
@@ -129,9 +145,9 @@ terraform {
 }
 
 provider "nosana" {
-  wallet_address    = var.wallet_address
-  signed_challenge  = var.signed_challenge
-  network          = var.network
+  keypair_path   = var.keypair_path
+  network        = var.network
+  market_address = var.market_address
 }
 
 resource "nosana_job" "example" {

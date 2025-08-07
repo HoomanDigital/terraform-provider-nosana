@@ -3,9 +3,12 @@ package main
 
 import (
 	"context"
-	// "encoding/json"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -67,18 +70,110 @@ type NosanaJob struct {
 	// Add other relevant fields from the Nosana API response
 }
 
-// createNosanaJobAPI simulates calling the Nosana API to create a job.
-func (c *nosanaClient) createNosanaJobAPI(jobDefinition string) (*NosanaJob, error) {
-	log.Printf("[INFO] Nosana API: Creating job with definition: %s (Auth Token: %s)", jobDefinition, c.authToken)
-	// In a real scenario, this would make an HTTP POST request to Nosana's job creation endpoint.
-	// It would parse the jobDefinition and send it as part of the request body.
-	// Example:
-	// resp, err := http.Post(c.BaseURL + "/jobs", "application/json", bytes.NewBufferString(jobDefinition))
-	// if err != nil { return nil, fmt.Errorf("failed to submit job: %w", err) }
-	// ... parse response to get job ID and initial status
-	mockJobID := fmt.Sprintf("nosana-job-%d", time.Now().UnixNano())
-	log.Printf("[INFO] Nosana API: Job created with ID: %s", mockJobID)
-	return &NosanaJob{ID: mockJobID, Status: "PENDING"}, nil // Simulate initial pending status
+// createNosanaJobAPI submits a job to Nosana using the CLI.
+func (c *nosanaClient) createNosanaJobAPI(jobDefinition, marketAddress string) (*NosanaJob, error) {
+	log.Printf("[INFO] Nosana CLI: Creating job")
+
+	// Determine market address - use job-specific if provided, otherwise provider default
+	market := marketAddress
+	if market == "" {
+		market = c.MarketAddress
+	}
+
+	// Create temporary file for job definition
+	tempFile, err := createTempJobFile(jobDefinition)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temporary job file: %w", err)
+	}
+	defer os.Remove(tempFile) // Clean up temp file
+
+	// Execute: nosana job post --file <json_file> --market <market> --timeout <minutes> --wait
+	args := []string{"job", "post", "--file", tempFile, "--market", market, "--timeout", "10", "--wait"}
+
+	output, err := c.runNosanaCommand(args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to submit job via CLI: %w", err)
+	}
+
+	// Parse the CLI output to extract job ID
+	jobID := extractJobIDFromOutput(output)
+	if jobID == "" {
+		return nil, fmt.Errorf("could not extract job ID from CLI output: %s", output)
+	}
+
+	log.Printf("[INFO] Nosana CLI: Job created with ID: %s", jobID)
+	return &NosanaJob{ID: jobID, Status: "PENDING"}, nil
+}
+
+// createTempJobFile creates a temporary JSON file with the job definition
+func createTempJobFile(jobDefinition string) (string, error) {
+	// Validate that it's valid JSON
+	var jobData interface{}
+	if err := json.Unmarshal([]byte(jobDefinition), &jobData); err != nil {
+		return "", fmt.Errorf("invalid JSON in job definition: %w", err)
+	}
+
+	// Create temporary file
+	tempFile, err := os.CreateTemp("", "nosana-job-*.json")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer tempFile.Close()
+
+	// Write job definition to file
+	if _, err := tempFile.WriteString(jobDefinition); err != nil {
+		os.Remove(tempFile.Name())
+		return "", fmt.Errorf("failed to write job definition to temp file: %w", err)
+	}
+
+	log.Printf("[DEBUG] Created temporary job file: %s", tempFile.Name())
+	return tempFile.Name(), nil
+}
+
+// extractJobIDFromOutput parses the Nosana CLI output to extract the job ID
+func extractJobIDFromOutput(output string) string {
+	log.Printf("[DEBUG] Parsing CLI output for job ID: %s", output)
+
+	// Look for job ID in patterns like:
+	// "Job: https://dashboard.nosana.com/jobs/FQTP2F5hNP2rNGUtQm4Annrx462PgxPcSA6ND6ToPTxH"
+	jobURLRegex := regexp.MustCompile(`Job:\s+https://dashboard\.nosana\.com/jobs/([A-Za-z0-9]+)`)
+	matches := jobURLRegex.FindStringSubmatch(output)
+	if len(matches) > 1 {
+		log.Printf("[DEBUG] Extracted job ID from URL: %s", matches[1])
+		return matches[1]
+	}
+
+	// Look for transaction hash pattern:
+	// "job posted with tx 2r75ajjHdr5mPZV85NjFxtY28tKYK3UvNtdD7W7TfYCKvCXGgEdgJsia3jWdWaz5VES5sZWipEabnjwQkoE1dcwf!"
+	txRegex := regexp.MustCompile(`job posted with tx ([A-Za-z0-9]+)`)
+	matches = txRegex.FindStringSubmatch(output)
+	if len(matches) > 1 {
+		log.Printf("[DEBUG] Extracted transaction hash as job ID: %s", matches[1])
+		return matches[1]
+	}
+
+	// Look for any base58-like string that could be a job ID (32-44 characters)
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		words := strings.Fields(line)
+		for _, word := range words {
+			word = strings.TrimRight(word, "!.,")
+			if len(word) >= 32 && len(word) <= 50 && isBase58Like(word) {
+				log.Printf("[DEBUG] Found potential job ID: %s", word)
+				return word
+			}
+		}
+	}
+
+	log.Printf("[WARN] Could not extract job ID from CLI output")
+	return ""
+}
+
+// isBase58Like checks if a string looks like base58 encoding
+func isBase58Like(s string) bool {
+	base58Regex := regexp.MustCompile(`^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$`)
+	return base58Regex.MatchString(s)
 }
 
 // getNosanaJobStatusAPI simulates calling the Nosana API to get job status.
@@ -120,14 +215,28 @@ func (c *nosanaClient) deleteNosanaJobAPI(jobID string) error {
 // resourceNosanaJobCreate handles the creation of a Nosana job.
 func resourceNosanaJobCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*nosanaClient)
-	jobDefinition := d.Get("job_definition").(string)
-	waitForCompletion := d.Get("wait_for_completion").(bool)
-	completionTimeoutSeconds := d.Get("completion_timeout_seconds").(int)
 
-	// var diags diag.Diagnostics
+	// Safe type assertion with default values
+	jobDefinition, ok := d.Get("job_definition").(string)
+	if !ok || jobDefinition == "" {
+		return diag.FromErr(fmt.Errorf("job_definition is required"))
+	}
 
-	// 1. Create the Nosana Job via API
-	job, err := client.createNosanaJobAPI(jobDefinition)
+	waitForCompletion, ok := d.Get("wait_for_completion").(bool)
+	if !ok {
+		waitForCompletion = false // Default value
+	}
+
+	completionTimeoutSeconds, ok := d.Get("completion_timeout_seconds").(int)
+	if !ok {
+		completionTimeoutSeconds = 300 // Default value
+	}
+
+	// Market address comes from provider configuration, not resource
+	marketAddress := client.MarketAddress
+
+	// 1. Create the Nosana Job via CLI
+	job, err := client.createNosanaJobAPI(jobDefinition, marketAddress)
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("failed to create Nosana job: %w", err))
 	}
