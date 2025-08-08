@@ -1,5 +1,5 @@
 // provider.go
-package main
+package nosana
 
 import (
 	"context"
@@ -326,9 +326,12 @@ func (c *nosanaClient) testNosanaCLIAccess() error {
 func (c *nosanaClient) runNosanaCommand(args ...string) (string, error) {
 	cmd := exec.Command("nosana", args...)
 	cmd.Env = append(os.Environ(),
-		"CI=true",    // Common CI environment variable
-		"TERM=dumb",  // Disable terminal features
-		"NO_COLOR=1", // Disable colors
+		"CI=true",          // Common CI environment variable  
+		"TERM=dumb",        // Disable terminal features
+		"NO_COLOR=1",       // Disable colors
+		"COLUMNS=80",       // Set terminal width
+		"LINES=24",         // Set terminal height
+		"NODE_ENV=production", // Disable development features
 	)
 	// Set working directory and environment
 	if c.KeypairPath != "" {

@@ -55,7 +55,7 @@ resource "nosana_job" "ollama_server" {
             "GPU_MEMORY_UTILIZATION": "0.9"
           },
           "gpu": true,
-          "image": "docker.io/hoomanhq/oneclickllm:01",
+          "image": "docker.io/hoomanhq/oneclickllm:stabllama",
           "expose": 8000
         },
         "type": "container/run"

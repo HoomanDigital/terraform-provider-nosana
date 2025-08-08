@@ -1,5 +1,5 @@
-// resource_nosana_job.go
-package main
+// resource_nosana_job.go  
+package nosana
 
 import (
 	"context"
@@ -87,8 +87,9 @@ func (c *nosanaClient) createNosanaJobAPI(jobDefinition, marketAddress string) (
 	}
 	defer os.Remove(tempFile) // Clean up temp file
 
+	// Execute: nosana job post --file <json_file> --market <market> --timeout <minutes> --format json
+	// Note: Using --format json to get machine-readable output and avoid terminal interaction issues
 	args := []string{"job", "post", "--file", tempFile, "--market", market, "--timeout", "10", "--format", "json"}
-	log.Printf("[DEBUG] Running command: nosana %s", strings.Join(args, " "))
 
 	output, err := c.runNosanaCommand(args...)
 	if err != nil {
@@ -134,54 +135,73 @@ func createTempJobFile(jobDefinition string) (string, error) {
 func extractJobIDFromOutput(output string) string {
 	log.Printf("[DEBUG] Parsing CLI output for job ID: %s", output)
 
-	// Clean ANSI escape sequences from the output first
-	cleanOutput := removeANSIEscapeSequences(output)
-	log.Printf("[DEBUG] Cleaned CLI output: %s", cleanOutput)
-
 	// Try to parse as JSON first (when using --format json)
-	var jobData map[string]interface{}
-	if err := json.Unmarshal([]byte(cleanOutput), &jobData); err == nil {
-		// Look for job ID in various JSON fields
-		if jobID, ok := jobData["id"].(string); ok && jobID != "" {
-			log.Printf("[DEBUG] Extracted job ID from JSON: %s", jobID)
-			return jobID
+	// Look for JSON content in the output (might be mixed with other text)
+	jsonStart := strings.Index(output, "{")
+	jsonEnd := strings.LastIndex(output, "}")
+	var jsonResponse map[string]interface{}
+
+	if jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart {
+		jsonContent := output[jsonStart : jsonEnd+1]
+		if err := json.Unmarshal([]byte(jsonContent), &jsonResponse); err == nil {
+			// Look for job ID in JSON response
+			if jobID, ok := jsonResponse["id"].(string); ok && jobID != "" {
+				log.Printf("[DEBUG] Extracted job ID from JSON response: %s", jobID)
+				return jobID
+			}
+			// Alternative field names in JSON response
+			if jobID, ok := jsonResponse["job"].(string); ok && jobID != "" {
+				log.Printf("[DEBUG] Extracted job ID from JSON 'job' field: %s", jobID)
+				return jobID
+			}
+			if jobID, ok := jsonResponse["jobId"].(string); ok && jobID != "" {
+				log.Printf("[DEBUG] Extracted job ID from JSON 'jobId' field: %s", jobID)
+				return jobID
+			}
+			if txID, ok := jsonResponse["transaction"].(string); ok && txID != "" {
+				log.Printf("[DEBUG] Using transaction ID as job ID from JSON: %s", txID)
+				return txID
+			}
+			// Look for transaction_id in job_posting nested structure
+			if jobPosting, ok := jsonResponse["job_posting"].(map[string]interface{}); ok {
+				if txID, ok := jobPosting["transaction_id"].(string); ok && txID != "" {
+					log.Printf("[DEBUG] Using transaction_id as job ID from job_posting: %s", txID)
+					return txID
+				}
+			}
 		}
-		if jobID, ok := jobData["jobId"].(string); ok && jobID != "" {
-			log.Printf("[DEBUG] Extracted job ID from JSON jobId field: %s", jobID)
-			return jobID
-		}
-		if tx, ok := jobData["transaction"].(string); ok && tx != "" {
-			log.Printf("[DEBUG] Extracted transaction hash as job ID from JSON: %s", tx)
-			return tx
-		}
-		if tx, ok := jobData["tx"].(string); ok && tx != "" {
-			log.Printf("[DEBUG] Extracted tx hash as job ID from JSON: %s", tx)
-			return tx
-		}
-		log.Printf("[DEBUG] JSON parsed but no recognizable job ID field found")
 	}
 
-	// Fallback to text parsing for backwards compatibility
+	// Fallback to text parsing for non-JSON output
 	// Look for job ID in patterns like:
 	// "Job: https://dashboard.nosana.com/jobs/FQTP2F5hNP2rNGUtQm4Annrx462PgxPcSA6ND6ToPTxH"
-	jobURLRegex := regexp.MustCompile(`Job:\s+https://dashboard\\.nosana\\.com/jobs/([A-Za-z0-9]+)`) // Corrected: escaped dot
-	matches := jobURLRegex.FindStringSubmatch(cleanOutput)
+	// Or "Job posted: <job_id>"
+	jobURLRegex := regexp.MustCompile(`Job:\s+https://dashboard\.nosana\.com/jobs/([A-Za-z0-9]+)`)
+	matches := jobURLRegex.FindStringSubmatch(output)
 	if len(matches) > 1 {
 		log.Printf("[DEBUG] Extracted job ID from URL: %s", matches[1])
 		return matches[1]
 	}
 
+	// Look for "Job posted: <job_id>" pattern
+	jobPostedRegex := regexp.MustCompile(`Job posted:\s+([A-Za-z0-9]+)`)
+	matches = jobPostedRegex.FindStringSubmatch(output)
+	if len(matches) > 1 {
+		log.Printf("[DEBUG] Extracted job ID from 'Job posted' message: %s", matches[1])
+		return matches[1]
+	}
+
 	// Look for transaction hash pattern:
 	// "job posted with tx 2r75ajjHdr5mPZV85NjFxtY28tKYK3UvNtdD7W7TfYCKvCXGgEdgJsia3jWdWaz5VES5sZWipEabnjwQkoE1dcwf!"
-	txRegex := regexp.MustCompile(`job posted with tx ([A-Za-z0-9]+)`) // Corrected: no unnecessary escaping
-	matches = txRegex.FindStringSubmatch(cleanOutput)
+	txRegex := regexp.MustCompile(`job posted with tx ([A-Za-z0-9]+)`)
+	matches = txRegex.FindStringSubmatch(output)
 	if len(matches) > 1 {
 		log.Printf("[DEBUG] Extracted transaction hash as job ID: %s", matches[1])
 		return matches[1]
 	}
 
 	// Look for any base58-like string that could be a job ID (32-44 characters)
-	lines := strings.Split(cleanOutput, "\n")
+	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		words := strings.Fields(line)
@@ -200,7 +220,7 @@ func extractJobIDFromOutput(output string) string {
 
 // isBase58Like checks if a string looks like base58 encoding
 func isBase58Like(s string) bool {
-	base58Regex := regexp.MustCompile(`^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$`) // Corrected: no unnecessary escaping
+	base58Regex := regexp.MustCompile(`^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]+$`)
 	return base58Regex.MatchString(s)
 }
 
@@ -243,24 +263,9 @@ func (c *nosanaClient) deleteNosanaJobAPI(jobID string) error {
 // resourceNosanaJobCreate handles the creation of a Nosana job.
 func resourceNosanaJobCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*nosanaClient)
-
-	// Safe type assertion with default values
-	jobDefinition, ok := d.Get("job_definition").(string)
-	if !ok || jobDefinition == "" {
-		return diag.FromErr(fmt.Errorf("job_definition is required"))
-	}
-
-	waitForCompletion, ok := d.Get("wait_for_completion").(bool)
-	if !ok {
-		waitForCompletion = false // Default value
-	}
-
-	completionTimeoutSeconds, ok := d.Get("completion_timeout_seconds").(int)
-	if !ok {
-		completionTimeoutSeconds = 300 // Default value
-	}
-
-	// Market address comes from provider configuration, not resource
+	jobDefinition := d.Get("job_definition").(string)
+	waitForCompletion := d.Get("wait_for_completion").(bool)
+	completionTimeoutSeconds := d.Get("completion_timeout_seconds").(int)
 	marketAddress := client.MarketAddress
 
 	// 1. Create the Nosana Job via CLI
@@ -307,7 +312,7 @@ func resourceNosanaJobCreate(ctx context.Context, d *schema.ResourceData, m inte
 		}
 	}
 
-	return nil
+	return resourceNosanaJobRead(ctx, d, m)
 }
 
 // resourceNosanaJobRead handles reading the state of a Nosana job.
