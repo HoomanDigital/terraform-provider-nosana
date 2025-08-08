@@ -112,14 +112,19 @@ The provider outputs debug information to the console. Look for lines starting w
 ## Project Structure
 
 ```
-TerraformProvider-Nosana/
-├── main.go                    # Entry point
-├── provider.go               # Provider configuration and client
-├── resource_nosana_job.go    # Job resource implementation
-├── test-local.tf            # Test configuration
-├── dev.ps1                  # Development script
-├── Makefile                 # Make commands (Linux/Mac)
-└── terraform-provider-nosana.exe  # Built binary
+terraform-provider-nosana/
+├── nosana/                   # Provider source code package  
+│   ├── provider.go           # Provider configuration and client
+│   └── resource_nosana_job.go# Job resource implementation
+├── examples/                 # Usage examples
+│   ├── README.md             # Example documentation
+│   └── main.tf               # Working configuration samples
+├── SETUP.md                  # Detailed setup guide
+├── DEV_GUIDE.md              # This development guide
+├── main.go                   # Entry point
+├── dev.ps1 / dev.sh          # Cross-platform development scripts
+├── go.mod                    # Go module definition
+└── .gitignore                # Git ignore rules
 ```
 
 ## Next Steps

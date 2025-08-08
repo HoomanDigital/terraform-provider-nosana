@@ -2,49 +2,24 @@
 
 A Terraform provider for managing Nosana jobs on the Nosana Network.
 
+## 🚀 Quick Start
+
+**📖 For detailed setup instructions, see [SETUP.md](SETUP.md)**
+
 ## Prerequisites
 
-- **Go 1.21+** - [Download Go](https://golang.org/dl/)
-- **Terraform 1.0+** - [Download Terraform](https://www.terraform.io/downloads.html)
-- **Node.js/npm** - [Download Node.js](https://nodejs.org/) (for Nosana CLI)
-- **Nosana CLI** - Install with: `npm install -g @nosana/cli`
-- **Git** - For version control
+- **Go 1.21+**, **Terraform 1.0+**, **Node.js/npm**
+- **Nosana CLI**: `npm install -g @nosana/cli`
+- **Funded Nosana wallet** with SOL and NOS tokens
 
-## Quick Start
-
-### Windows (PowerShell)
-
-```powershell
-# Clone and build
-git clone <repository-url>
-cd TerraformProvider-Nosana
-
-# Development cycle (build, install, initialize)
-.\dev.ps1 dev
-
-# Test the provider
-.\dev.ps1 plan
-.\dev.ps1 apply
-.\dev.ps1 destroy
-```
-
-### Linux/macOS (Bash)
-
+### Quick Setup
 ```bash
-# Clone and build
-git clone <repository-url>
-cd TerraformProvider-Nosana
+# Clone and setup
+git clone https://github.com/hoomandigital/terraform-provider-nosana.git
+cd terraform-provider-nosana
 
-# Make script executable
-chmod +x dev.sh
-
-# Development cycle (build, install, initialize)
-./dev.sh dev
-
-# Test the provider
-./dev.sh plan
-./dev.sh apply
-./dev.sh destroy
+# Windows: .\dev.ps1 dev
+# Linux/macOS: ./dev.sh dev
 ```
 
 ## Development Commands
@@ -83,55 +58,16 @@ chmod +x dev.sh
 | `./dev.sh dev` | Full development cycle |
 | `./dev.sh help` | Show all commands |
 
-## Configuration
+## 📋 What It Does
 
-### Setup Nosana CLI
-First, install and configure the Nosana CLI:
+Deploy **AI/ML workloads**, **web services**, and **containerized applications** on the Nosana decentralized compute network using familiar Terraform workflows.
 
-```bash
-# Install the Nosana CLI
-npm install -g @nosana/cli
-
-# Initialize your wallet (creates ~/.nosana/nosana_key.json)
-nosana address
-
-# Fund your wallet with SOL and NOS tokens
-# Visit https://dashboard.nosana.com/ for more info
-```
-
-### Using with Default Settings
-The provider works with the default Nosana CLI configuration:
-
-**Windows:**
-```powershell
-.\dev.ps1 apply
-```
-
-**Linux/macOS:**
-```bash
-./dev.sh apply
-```
-
-### Using Custom Configuration
-Set environment variables to customize the configuration:
-
-**Windows:**
-```powershell
-$env:TF_VAR_keypair_path = "C:\path\to\your\keypair.json"  # Optional
-$env:TF_VAR_network = "mainnet"  # or "devnet"
-$env:TF_VAR_market_address = "your_preferred_market_address"
-
-.\dev.ps1 apply
-```
-
-**Linux/macOS:**
-```bash
-export TF_VAR_keypair_path="/path/to/your/keypair.json"  # Optional
-export TF_VAR_network="mainnet"  # or "devnet"
-export TF_VAR_market_address="your_preferred_market_address"
-
-./dev.sh apply
-```
+**Key Features:**
+- 🤖 **GPU-enabled AI workloads** (LLMs, ML inference, training)
+- 🌐 **Web services** with automatic port exposure  
+- 💰 **Cost-effective** - Pay only for compute time used
+- 🔒 **Decentralized** - No single point of failure
+- 📊 **Terraform state management** - Full lifecycle support
 
 ## Example Usage
 
@@ -175,41 +111,24 @@ resource "nosana_job" "example" {
 }
 ```
 
-## Project Structure
+
+
+## 🏗️ Project Structure
 
 ```
-TerraformProvider-Nosana/
-├── main.go                    # Entry point
-├── provider.go               # Provider configuration
-├── resource_nosana_job.go    # Job resource implementation
-├── test-local.tf            # Test configuration
-├── dev.ps1                  # Windows development script
-├── dev.sh                   # Linux development script
-├── go.mod                   # Go module definition
-└── go.sum                   # Go module checksums
+terraform-provider-nosana/
+├── nosana/              # Provider source code
+│   ├── provider.go      # Provider configuration
+│   └── resource_nosana_job.go # Job resource implementation  
+├── examples/            # Usage examples
+│   ├── README.md        # Example documentation
+│   └── main.tf          # Working configurations
+├── SETUP.md             # Detailed setup guide
+├── DEV_GUIDE.md         # Development guide
+├── dev.ps1 / dev.sh     # Development scripts
+└── main.go              # Entry point
 ```
 
-## Manual Build (Alternative)
+## 🔧 Development
 
-If you prefer not to use the dev scripts:
-
-**Windows:**
-```powershell
-# Build
-go build -o terraform-provider-nosana.exe .
-
-# Install
-$pluginPath = "$env:APPDATA\terraform.d\plugins\localhost\hoomandigital\nosana\1.0.0\windows_amd64"
-New-Item -ItemType Directory -Path $pluginPath -Force
-Copy-Item terraform-provider-nosana.exe $pluginPath -Force
-
-# Test
-terraform init
-terraform plan
-terraform apply
-```
-
-**Linux/macOS:**
-```bash
-# Build
-go build -o terraform-provider-nosana .
+See [DEV_GUIDE.md](DEV_GUIDE.md) for development instructions.

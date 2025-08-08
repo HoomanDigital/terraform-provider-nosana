@@ -22,11 +22,10 @@ variable "network" {
 variable "market_address" {
   description = "Default market address for job submissions"
   type        = string
-  default     = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"  # Example market from docs
+  default     = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"  
 }
 
 provider "nosana" {
-  # 🚀 OUT-OF-THE-BOX CONFIGURATION
   # Just set environment variable: $env:NOSANA_PRIVATE_KEY = "your_phantom_wallet_private_key"
   # The provider automatically handles keypair setup!
   
