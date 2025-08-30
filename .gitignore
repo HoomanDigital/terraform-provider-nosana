@@ -50,10 +50,38 @@ ehthumbs.db
 Thumbs.db
 
 # Nosana keypairs and sensitive files
-*.json
 nosana_key.json
 .nosana/
 wallet.json
+
+# GPG Keys and signing (NEVER commit these!)
+*.key
+*.asc
+gpg_*
+*_SHA256SUMS*
+
+# Private registry files (NEVER commit these!)
+.provider_id
+.key_id
+.shasums_*
+version.json
+key.json
+provider.json
+
+# Environment and secrets
+.env*
+*.pem
+*.key
+secrets/
+private/
+
+# API tokens and credentials
+*token*
+*secret*
+*credential*
+
+# Terraform provider binaries (exclude from repo)
+terraform-provider-nosana*
 
 # Local development files
 .env

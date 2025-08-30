@@ -6,7 +6,7 @@
 set -e
 
 PROVIDER_NAME="terraform-provider-nosana"
-PLUGIN_PATH="$HOME/.terraform.d/plugins/localhost/hoomandigital/nosana/1.0.0/linux_amd64"
+PLUGIN_PATH="$HOME/.terraform.d/plugins/localhost/codebrewery/nosana/1.0.0/linux_amd64"
 
 function build() {
     echo -e "\033[32mBuilding provider...\033[0m"

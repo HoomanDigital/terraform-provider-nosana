@@ -75,7 +75,8 @@ Deploy **AI/ML workloads**, **web services**, and **containerized applications**
 terraform {
   required_providers {
     nosana = {
-      source = "localhost/hoomandigital/nosana"
+      source  = "app.terraform.io/codebrewery/nosana"
+      version = "~> 0.1"
     }
   }
 }
@@ -127,6 +128,22 @@ terraform-provider-nosana/
 ├── DEV_GUIDE.md         # Development guide
 ├── dev.ps1 / dev.sh     # Development scripts
 └── main.go              # Entry point
+```
+
+## 📚 Examples
+
+Check out the [`examples/`](./examples/) directory for comprehensive usage examples:
+
+- **`sample.tf`** - Complete examples for web services, AI/ML workloads, and data processing
+- **`test.tf`** - Simple test configuration to verify your setup
+- **`README.md`** - Detailed documentation for all examples
+
+### Quick Start:
+```bash
+cd examples
+terraform init
+terraform plan
+terraform apply
 ```
 
 ## 🔧 Development
