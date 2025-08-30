@@ -98,7 +98,7 @@ func newNosanaClient(privateKey, keypairPath, network, marketAddress string) (*n
 	// Verify Nosana CLI is available
 	output, err := exec.Command("nosana", "--version").CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("Nosana CLI not found. Please install it with: npm install -g @nosana/cli. Error: %w", err)
+		return nil, fmt.Errorf("nosana CLI not found. Please install it with: npm install -g @nosana/cli. Error: %w", err)
 	}
 
 	log.Printf("[INFO] Nosana CLI version: %s", strings.TrimSpace(string(output)))
@@ -326,11 +326,11 @@ func (c *nosanaClient) testNosanaCLIAccess() error {
 func (c *nosanaClient) runNosanaCommand(args ...string) (string, error) {
 	cmd := exec.Command("nosana", args...)
 	cmd.Env = append(os.Environ(),
-		"CI=true",          // Common CI environment variable  
-		"TERM=dumb",        // Disable terminal features
-		"NO_COLOR=1",       // Disable colors
-		"COLUMNS=80",       // Set terminal width
-		"LINES=24",         // Set terminal height
+		"CI=true",             // Common CI environment variable
+		"TERM=dumb",           // Disable terminal features
+		"NO_COLOR=1",          // Disable colors
+		"COLUMNS=80",          // Set terminal width
+		"LINES=24",            // Set terminal height
 		"NODE_ENV=production", // Disable development features
 	)
 	// Set working directory and environment

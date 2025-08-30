@@ -4,8 +4,8 @@ package main
 import (
 	"log"
 
+	"github.com/HoomanDigital/TerraformProvider-Nosana/nosana"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/plugin"
-	"github.com/hoomandigital/terraform-provider-nosana/nosana"
 )
 
 func main() {
