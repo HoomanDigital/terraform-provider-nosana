@@ -1,4 +1,4 @@
-module github.com/HoomanDigital/TerraformProvider-Nosana
+module github.com/HoomanDigital/terraform-provider-nosana
 
 go 1.21
 

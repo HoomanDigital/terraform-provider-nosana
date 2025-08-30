@@ -4,7 +4,7 @@ package main
 import (
 	"log"
 
-	"github.com/HoomanDigital/TerraformProvider-Nosana/nosana"
+	"github.com/HoomanDigital/terraform-provider-nosana/nosana"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/plugin"
 )
 

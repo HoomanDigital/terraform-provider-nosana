@@ -69,7 +69,7 @@ release:
   header: |
     ## Terraform Provider for Nosana {{ .Tag }}
 
-    **Full Changelog**: https://github.com/HoomanDigital/TerraformProvider-Nosana/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full Changelog**: https://github.com/HoomanDigital/terraform-provider-nosana/compare/{{ .PreviousTag }}...{{ .Tag }}
 
     The binaries published alongside this release are built with Go {{ .Env.GO_VERSION }} and signed with cosign for enhanced security.
 
@@ -79,7 +79,7 @@ release:
     Docker images are available on GitHub Container Registry:
 
     ```
-    docker pull ghcr.io/hoomandigital/terraformprovider-nosana:{{ .Tag }}
+    docker pull ghcr.io/hoomandigital/terraform-provider-nosana:{{ .Tag }}
     ```
 
 changelog:
