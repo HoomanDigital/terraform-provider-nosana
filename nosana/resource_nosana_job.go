@@ -16,6 +16,37 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
+// JobPostResult represents the result from the Node.js job post script
+type JobPostResult struct {
+	Success        bool   `json:"success"`
+	JobID          string `json:"job_id"`
+	TransactionID  string `json:"transaction_id"`
+	IPFSHash       string `json:"ipfs_hash"`
+	MarketAddress  string `json:"market_address"`
+	DashboardURL   string `json:"dashboard_url"`
+	MarketURL      string `json:"market_url"`
+	Error          string `json:"error"`
+}
+
+// JobStatusResult represents the result from the Node.js job status script
+type JobStatusResult struct {
+	Success      bool        `json:"success"`
+	JobID        string      `json:"job_id"`
+	Status       string      `json:"status"`
+	State        string      `json:"state"`
+	IPFSJob      string      `json:"ipfs_job"`
+	IPFSResult   string      `json:"ipfs_result"`
+	Market       string      `json:"market"`
+	Node         string      `json:"node"`
+	Price        string      `json:"price"`
+	TimeStart    string      `json:"time_start"`
+	TimeEnd      string      `json:"time_end"`
+	DashboardURL string      `json:"dashboard_url"`
+	ResultData   interface{} `json:"result_data"`
+	ResultError  string      `json:"result_error"`
+	Error        string      `json:"error"`
+}
+
 // resourceNosanaJob defines the schema and CRUD operations for the nosana_job resource.
 func resourceNosanaJob() *schema.Resource {
 	return &schema.Resource{
@@ -70,9 +101,9 @@ type NosanaJob struct {
 	// Add other relevant fields from the Nosana API response
 }
 
-// createNosanaJobAPI submits a job to Nosana using the CLI.
+// createNosanaJobAPI submits a job to Nosana using the SDK.
 func (c *nosanaClient) createNosanaJobAPI(jobDefinition, marketAddress string) (*NosanaJob, error) {
-	log.Printf("[INFO] Nosana CLI: Creating job")
+	log.Printf("[INFO] Nosana SDK: Creating job")
 
 	// Determine market address - use job-specific if provided, otherwise provider default
 	market := marketAddress
@@ -80,30 +111,31 @@ func (c *nosanaClient) createNosanaJobAPI(jobDefinition, marketAddress string) (
 		market = c.MarketAddress
 	}
 
-	// Create temporary file for job definition
-	tempFile, err := createTempJobFile(jobDefinition)
+	// Validate job definition is valid JSON
+	var jobData interface{}
+	if err := json.Unmarshal([]byte(jobDefinition), &jobData); err != nil {
+		return nil, fmt.Errorf("invalid JSON in job definition: %w", err)
+	}
+
+	// Call Node.js script to post job using SDK
+	// Args: market_address, job_definition_json
+	output, err := c.runNodeJSScript("nosana-job-post.js", market, jobDefinition)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temporary job file: %w", err)
+		return nil, fmt.Errorf("failed to submit job via SDK: %w", err)
 	}
-	defer os.Remove(tempFile) // Clean up temp file
 
-	// Execute: nosana job post --file <json_file> --market <market> --timeout <minutes> --format json
-	// Note: Using --format json to get machine-readable output and avoid terminal interaction issues
-	args := []string{"job", "post", "--file", tempFile, "--market", market, "--timeout", "10", "--format", "json"}
-
-	output, err := c.runNosanaCommand(args...)
+	// Parse the script output to extract job result
+	result, err := parseJobPostOutput(output)
 	if err != nil {
-		return nil, fmt.Errorf("failed to submit job via CLI: %w", err)
+		return nil, fmt.Errorf("failed to parse job post result: %w", err)
 	}
 
-	// Parse the CLI output to extract job ID
-	jobID := extractJobIDFromOutput(output)
-	if jobID == "" {
-		return nil, fmt.Errorf("could not extract job ID from CLI output: %s", output)
+	if !result.Success {
+		return nil, fmt.Errorf("job submission failed: %s", result.Error)
 	}
 
-	log.Printf("[INFO] Nosana CLI: Job created with ID: %s", jobID)
-	return &NosanaJob{ID: jobID, Status: "PENDING"}, nil
+	log.Printf("[INFO] Nosana SDK: Job created with ID: %s", result.JobID)
+	return &NosanaJob{ID: result.JobID, Status: "PENDING"}, nil
 }
 
 // createTempJobFile creates a temporary JSON file with the job definition
@@ -129,6 +161,52 @@ func createTempJobFile(jobDefinition string) (string, error) {
 
 	log.Printf("[DEBUG] Created temporary job file: %s", tempFile.Name())
 	return tempFile.Name(), nil
+}
+
+// parseJobPostOutput parses the output from the Node.js job post script
+func parseJobPostOutput(output string) (*JobPostResult, error) {
+	// Look for JSON result marker
+	resultMarker := "JOB_RESULT_JSON:"
+	errorMarker := "JOB_ERROR_JSON:"
+	
+	var jsonData string
+	if idx := strings.Index(output, resultMarker); idx != -1 {
+		jsonData = strings.TrimSpace(output[idx+len(resultMarker):])
+	} else if idx := strings.Index(output, errorMarker); idx != -1 {
+		jsonData = strings.TrimSpace(output[idx+len(errorMarker):])
+	} else {
+		return nil, fmt.Errorf("no JSON result found in script output: %s", output)
+	}
+
+	var result JobPostResult
+	if err := json.Unmarshal([]byte(jsonData), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON result: %w", err)
+	}
+
+	return &result, nil
+}
+
+// parseJobStatusOutput parses the output from the Node.js job status script
+func parseJobStatusOutput(output string) (*JobStatusResult, error) {
+	// Look for JSON status marker
+	statusMarker := "JOB_STATUS_JSON:"
+	errorMarker := "JOB_ERROR_JSON:"
+	
+	var jsonData string
+	if idx := strings.Index(output, statusMarker); idx != -1 {
+		jsonData = strings.TrimSpace(output[idx+len(statusMarker):])
+	} else if idx := strings.Index(output, errorMarker); idx != -1 {
+		jsonData = strings.TrimSpace(output[idx+len(errorMarker):])
+	} else {
+		return nil, fmt.Errorf("no JSON status found in script output: %s", output)
+	}
+
+	var result JobStatusResult
+	if err := json.Unmarshal([]byte(jsonData), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON status: %w", err)
+	}
+
+	return &result, nil
 }
 
 // extractJobIDFromOutput parses the Nosana CLI output to extract the job ID
@@ -224,26 +302,31 @@ func isBase58Like(s string) bool {
 	return base58Regex.MatchString(s)
 }
 
-// getNosanaJobStatusAPI simulates calling the Nosana API to get job status.
+// getNosanaJobStatusAPI gets job status using the SDK.
 func (c *nosanaClient) getNosanaJobStatusAPI(jobID string) (*NosanaJob, error) {
-	log.Printf("[INFO] Nosana API: Getting status for job ID: %s", jobID)
-	// In a real scenario, this would make an HTTP GET request to Nosana's job status endpoint.
-	// Example:
-	// resp, err := http.Get(c.BaseURL + "/jobs/" + jobID)
-	// ... parse response
-	// Simulate status changes for demonstration
-	switch jobID {
-	case "nosana-job-12345": // Example for a completed job
-		return &NosanaJob{ID: jobID, Status: "COMPLETED"}, nil
-	case "nosana-job-67890": // Example for a failed job
-		return &NosanaJob{ID: jobID, Status: "FAILED"}, nil
-	default: // Default to running for other mock jobs
-		// Simulate a job running for a bit, then completing
-		if time.Now().Second()%10 < 5 {
-			return &NosanaJob{ID: jobID, Status: "RUNNING"}, nil
-		}
-		return &NosanaJob{ID: jobID, Status: "COMPLETED"}, nil
+	log.Printf("[INFO] Nosana SDK: Getting status for job ID: %s", jobID)
+
+	// Call Node.js script to get job status using SDK
+	output, err := c.runNodeJSScript("nosana-job-get.js", jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get job status via SDK: %w", err)
 	}
+
+	// Parse the script output to extract job status
+	result, err := parseJobStatusOutput(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse job status result: %w", err)
+	}
+
+	if !result.Success {
+		// Check if it's a "job not found" error
+		if strings.Contains(result.Error, "not found") || strings.Contains(result.Error, "Job not found") {
+			return nil, fmt.Errorf("job not found")
+		}
+		return nil, fmt.Errorf("job status check failed: %s", result.Error)
+	}
+
+	return &NosanaJob{ID: result.JobID, Status: result.Status}, nil
 }
 
 // deleteNosanaJobAPI simulates calling the Nosana API to delete a job.

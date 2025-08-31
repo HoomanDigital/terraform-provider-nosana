@@ -46,6 +46,18 @@ func Provider() *schema.Provider {
 				Required:    true,
 				Description: "Default market address for job submissions.",
 			},
+			"cli_path": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				DefaultFunc: schema.EnvDefaultFunc("NOSANA_CLI_PATH", "nosana"),
+				Description: "Path to the Nosana CLI executable. Defaults to 'nosana' in PATH. Can be set via NOSANA_CLI_PATH environment variable.",
+			},
+			"skip_cli_validation": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Skip CLI validation during provider initialization. Useful for testing or when CLI is not available.",
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"nosana_job": resourceNosanaJob(),
@@ -57,16 +69,18 @@ func Provider() *schema.Provider {
 	}
 }
 
-// nosanaClient represents a client for interacting with the Nosana CLI.
+// nosanaClient represents a client for interacting with the Nosana SDK.
 type nosanaClient struct {
-	PrivateKey    string
-	KeypairPath   string
-	Network       string
-	MarketAddress string
+	PrivateKey         string
+	KeypairPath        string
+	Network            string
+	MarketAddress      string
+	CLIPath            string
+	SkipCLIValidation  bool
 }
 
-// newNosanaClient creates a new Nosana CLI client.
-func newNosanaClient(privateKey, keypairPath, network, marketAddress string) (*nosanaClient, error) {
+// newNosanaClient creates a new Nosana SDK client.
+func newNosanaClient(privateKey, keypairPath, network, marketAddress, cliPath string, skipCLIValidation bool) (*nosanaClient, error) {
 	log.Printf("[INFO] Initializing Nosana client for network: %s, market: %s", network, marketAddress)
 
 	// Determine keypair strategy: private key takes precedence over keypair path
@@ -89,34 +103,26 @@ func newNosanaClient(privateKey, keypairPath, network, marketAddress string) (*n
 	}
 
 	client := &nosanaClient{
-		PrivateKey:    privateKey,
-		KeypairPath:   resolvedKeypairPath,
-		Network:       network,
-		MarketAddress: marketAddress,
+		PrivateKey:        privateKey,
+		KeypairPath:       resolvedKeypairPath,
+		Network:           network,
+		MarketAddress:     marketAddress,
+		CLIPath:           cliPath,
+		SkipCLIValidation: skipCLIValidation,
 	}
 
-	// Verify Nosana CLI is available
-	output, err := exec.Command("nosana", "--version").CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("nosana CLI not found. Please install it with: npm install -g @nosana/cli. Error: %w", err)
+	// Verify Node.js and SDK are available (unless validation is skipped)
+	if !skipCLIValidation {
+		if err := client.validateSDKInstallation(); err != nil {
+			return nil, err
+		}
+
+		log.Printf("[INFO] Nosana SDK validation completed successfully")
+	} else {
+		log.Printf("[WARN] SDK validation skipped - some operations may fail if Node.js or SDK is not properly configured")
 	}
 
-	log.Printf("[INFO] Nosana CLI version: %s", strings.TrimSpace(string(output)))
-
-	// Verify keypair file exists and is accessible
-	if err := validateKeypairFile(resolvedKeypairPath); err != nil {
-		return nil, fmt.Errorf("keypair validation failed: %w", err)
-	}
-
-	// Test CLI access with the keypair
-	log.Printf("[INFO] Skipping wallet validation - CLI setup appears successful")
-	// TODO: Enable wallet validation once ANSI parsing is working
-	// return c.testNosanaCLIAccess()
-	// if err := client.testNosanaCLIAccess(); err != nil {
-	//     return nil, fmt.Errorf("failed to access Nosana CLI: %w", err)
-	// }
-
-	log.Printf("[INFO] Nosana CLI client initialized successfully")
+	log.Printf("[INFO] Nosana SDK client initialized successfully")
 	return client, nil
 }
 
@@ -275,97 +281,189 @@ func removeANSIEscapeSequences(output string) string {
 	return cleanOutput
 }
 
-// testNosanaCLIAccess tests if the CLI can access the wallet
-func (c *nosanaClient) testNosanaCLIAccess() error {
-	// Try to get the wallet address to verify CLI access
-	output, err := c.runNosanaCommand("address")
+// validateSDKInstallation tests if the SDK can access the wallet
+func (c *nosanaClient) validateSDKInstallation() error {
+	// Use the validation script to check SDK access
+	output, err := c.runNodeJSScript("nosana-validate.js")
 	if err != nil {
-		return fmt.Errorf("failed to get wallet address: %w", err)
+		return fmt.Errorf("failed to validate SDK installation: %w", err)
 	}
 
-	// Extract address from output
-	log.Printf("[DEBUG] Parsing nosana address output: %q", output)
-
-	// Remove ANSI color codes from the output
-	cleanOutput := removeANSIEscapeSequences(output)
-
-	lines := strings.Split(strings.TrimSpace(cleanOutput), "\n")
-	var address string
-	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		log.Printf("[DEBUG] Line %d: %q", i, line)
-
-		// Look for "Wallet:" prefix with flexible whitespace handling
-		if strings.Contains(line, "Wallet:") {
-			// Split on "Wallet:" and get everything after it
-			idx := strings.Index(line, "Wallet:")
-			if idx != -1 {
-				addressPart := line[idx+7:] // Skip "Wallet:"
-				// Remove tabs, spaces, and extract the address
-				addressPart = strings.TrimSpace(addressPart)
-				// Split by whitespace and take the first non-empty part
-				fields := strings.Fields(addressPart)
-				if len(fields) > 0 {
-					address = fields[0]
-					log.Printf("[DEBUG] Found wallet address: %q", address)
-					break
-				}
-			}
-		}
+	// Parse validation output
+	validationMarker := "VALIDATION_JSON:"
+	errorMarker := "VALIDATION_ERROR_JSON:"
+	
+	var jsonData string
+	if idx := strings.Index(output, validationMarker); idx != -1 {
+		jsonData = strings.TrimSpace(output[idx+len(validationMarker):])
+	} else if idx := strings.Index(output, errorMarker); idx != -1 {
+		jsonData = strings.TrimSpace(output[idx+len(errorMarker):])
+	} else {
+		return fmt.Errorf("no validation result found in SDK output: %s", output)
 	}
 
-	if address == "" {
-		return fmt.Errorf("could not extract wallet address from CLI output: %s", output)
+	var validationResult struct {
+		Success      bool     `json:"success"`
+		WalletAddress string   `json:"wallet_address"`
+		SOLBalance   float64  `json:"sol_balance"`
+		NOSBalance   string   `json:"nos_balance"`
+		HasSOL       bool     `json:"has_sufficient_sol"`
+		HasNOS       bool     `json:"has_nos_tokens"`
+		Warnings     []string `json:"warnings"`
+		Error        string   `json:"error"`
 	}
 
-	log.Printf("[INFO] Nosana wallet address: %s", address)
+	if err := json.Unmarshal([]byte(jsonData), &validationResult); err != nil {
+		return fmt.Errorf("failed to parse validation result: %w", err)
+	}
+
+	if !validationResult.Success {
+		return fmt.Errorf("SDK validation failed: %s", validationResult.Error)
+	}
+
+	log.Printf("[INFO] Nosana wallet address: %s", validationResult.WalletAddress)
+	log.Printf("[INFO] SOL balance: %.6f", validationResult.SOLBalance)
+	log.Printf("[INFO] NOS balance: %s", validationResult.NOSBalance)
+
+	// Log warnings if any
+	for _, warning := range validationResult.Warnings {
+		log.Printf("[WARN] %s", warning)
+	}
+
 	return nil
 }
 
-// runNosanaCommand executes a Nosana CLI command and returns the output
-func (c *nosanaClient) runNosanaCommand(args ...string) (string, error) {
-	cmd := exec.Command("nosana", args...)
-	cmd.Env = append(os.Environ(),
-		"CI=true",             // Common CI environment variable
-		"TERM=dumb",           // Disable terminal features
-		"NO_COLOR=1",          // Disable colors
-		"COLUMNS=80",          // Set terminal width
-		"LINES=24",            // Set terminal height
-		"NODE_ENV=production", // Disable development features
-	)
-	// Set working directory and environment
-	if c.KeypairPath != "" {
-		// Set the NOSANA_WALLET environment variable to point to our keypair
-		cmd.Env = append(cmd.Env, "NOSANA_WALLET="+c.KeypairPath)
-
-		// Also try setting the keypair directory
-		keypairDir := filepath.Dir(c.KeypairPath)
-		cmd.Env = append(cmd.Env, "NOSANA_HOME="+keypairDir)
+// runNodeJSScript executes a Node.js script using the Nosana SDK or bundled executable
+func (c *nosanaClient) runNodeJSScript(scriptName string, args ...string) (string, error) {
+	// Get the path to the scripts directory
+	scriptsDir := getScriptsDir()
+	
+	// Try bundled executable first (for distribution), then fall back to Node.js script (for development)
+	bundledExecutable := getBundledExecutablePath(scriptsDir, scriptName)
+	if bundledExecutable != "" {
+		return c.runBundledExecutable(bundledExecutable, args...)
 	}
+	
+	// Fallback to Node.js script for development
+	return c.runNodeJSScriptDirect(scriptsDir, scriptName, args...)
+}
 
-	// Set network if specified
-	if c.Network != "" && c.Network != "mainnet" {
-		cmd.Env = append(cmd.Env, "NOSANA_NETWORK="+c.Network)
-	}
+// runBundledExecutable runs a pre-compiled executable (no Node.js required)
+func (c *nosanaClient) runBundledExecutable(executablePath string, args ...string) (string, error) {
+	// Prepare command arguments: executable privateKey network ...args
+	cmdArgs := []string{c.PrivateKey, c.Network}
+	cmdArgs = append(cmdArgs, args...)
 
-	log.Printf("[DEBUG] Running command: nosana %s", strings.Join(args, " "))
+	cmd := exec.Command(executablePath, cmdArgs...)
+	cmd.Env = append(os.Environ())
 
-	// Use regular command execution instead of pty (pty doesn't work on Windows)
+	log.Printf("[DEBUG] Running bundled executable: %s with args: %v", filepath.Base(executablePath), args)
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(output), fmt.Errorf("command failed with exit code: %w", err)
+		return string(output), fmt.Errorf("bundled executable failed: %w", err)
 	}
 
 	return string(output), nil
-} // providerConfigure is called once at the start of a Terraform run.
+}
+
+// runNodeJSScriptDirect runs a Node.js script directly (development mode)
+func (c *nosanaClient) runNodeJSScriptDirect(scriptsDir, scriptName string, args ...string) (string, error) {
+	scriptPath := filepath.Join(scriptsDir, scriptName)
+
+	// Prepare command arguments: node script.js privateKey network ...args
+	cmdArgs := []string{scriptPath, c.PrivateKey, c.Network}
+	cmdArgs = append(cmdArgs, args...)
+
+	cmd := exec.Command("node", cmdArgs...)
+	cmd.Env = append(os.Environ(),
+		"NODE_ENV=production",
+	)
+
+	log.Printf("[DEBUG] Running Node.js script: %s with args: %v", scriptName, args)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("Node.js script failed: %w", err)
+	}
+
+	return string(output), nil
+}
+
+// getScriptsDir returns the path to the scripts directory
+func getScriptsDir() string {
+	// Try to find scripts directory relative to the current executable
+	if ex, err := os.Executable(); err == nil {
+		// Look for scripts directory next to the provider binary
+		scriptsDir := filepath.Join(filepath.Dir(ex), "scripts")
+		if _, err := os.Stat(scriptsDir); err == nil {
+			return scriptsDir
+		}
+	}
+
+	// Fallback to relative path (for development)
+	if wd, err := os.Getwd(); err == nil {
+		scriptsDir := filepath.Join(wd, "scripts")
+		if _, err := os.Stat(scriptsDir); err == nil {
+			return scriptsDir
+		}
+		
+		// Try going up one directory (common in Go project structure)
+		scriptsDir = filepath.Join(filepath.Dir(wd), "scripts")
+		if _, err := os.Stat(scriptsDir); err == nil {
+			return scriptsDir
+		}
+	}
+
+	// Default fallback
+	return "./scripts"
+}
+
+// getBundledExecutablePath checks for bundled executables and returns the path if found
+func getBundledExecutablePath(scriptsDir, scriptName string) string {
+	// Remove .js extension and get base name
+	baseName := strings.TrimSuffix(scriptName, ".js")
+	
+	// Determine platform-specific executable name
+	var executableName string
+	switch {
+	case strings.Contains(strings.ToLower(os.Getenv("OS")), "windows"):
+		executableName = baseName + "-win.exe"
+	case strings.Contains(strings.ToLower(os.Getenv("GOOS")), "darwin"):
+		executableName = baseName + "-macos"
+	default:
+		executableName = baseName + "-linux"
+	}
+	
+	// Check if bundled executable exists
+	executablePath := filepath.Join(scriptsDir, executableName)
+	if _, err := os.Stat(executablePath); err == nil {
+		log.Printf("[DEBUG] Found bundled executable: %s", executablePath)
+		return executablePath
+	}
+	
+	// Try alternative naming (without platform suffix)
+	executablePath = filepath.Join(scriptsDir, baseName)
+	if _, err := os.Stat(executablePath); err == nil {
+		log.Printf("[DEBUG] Found bundled executable: %s", executablePath)
+		return executablePath
+	}
+	
+	log.Printf("[DEBUG] No bundled executable found for %s, falling back to Node.js script", scriptName)
+	return ""
+}
+
+// providerConfigure is called once at the start of a Terraform run.
 func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
 	privateKey := d.Get("private_key").(string)
 	keypairPath := d.Get("keypair_path").(string)
 	network := d.Get("network").(string)
 	marketAddress := d.Get("market_address").(string)
+	cliPath := d.Get("cli_path").(string)
+	skipCLIValidation := d.Get("skip_cli_validation").(bool)
 
 	// Create a new Nosana client with the provided configuration.
-	client, err := newNosanaClient(privateKey, keypairPath, network, marketAddress)
+	client, err := newNosanaClient(privateKey, keypairPath, network, marketAddress, cliPath, skipCLIValidation)
 	if err != nil {
 		return nil, diag.FromErr(fmt.Errorf("failed to configure Nosana provider: %w", err))
 	}

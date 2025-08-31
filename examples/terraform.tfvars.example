@@ -1,0 +1,19 @@
+# Example Terraform Variables File
+# Copy this to terraform.tfvars and fill in your values
+# DO NOT COMMIT terraform.tfvars TO VERSION CONTROL
+
+# Required: Solana private key in base58 format
+# Get this from your Solana wallet (e.g., Phantom, Sollet, or CLI wallet)
+private_key = "YOUR_BASE58_PRIVATE_KEY_HERE"
+
+# Optional: Network to use (default: mainnet)
+# network = "mainnet"  # or "devnet" for testing
+
+# Optional: Market address for job submissions
+# market_address = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"
+
+# Alternative: Use environment variables instead
+# Set these in your shell:
+# export TF_VAR_private_key="YOUR_BASE58_PRIVATE_KEY_HERE"
+# export TF_VAR_network="mainnet"
+# export TF_VAR_market_address="YOUR_MARKET_ADDRESS"

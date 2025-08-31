@@ -1,62 +1,50 @@
 # Terraform Provider for Nosana
 
-A Terraform provider for managing Nosana jobs on the Nosana Network.
+A Terraform provider for managing Nosana jobs on the Nosana Network. Deploy AI/ML workloads, web services, and containerized applications on decentralized compute infrastructure.
+
+[![Registry](https://img.shields.io/badge/registry-terraform.io-blue)](https://registry.terraform.io/providers/HoomanDigital/nosana)
+[![Release](https://img.shields.io/github/v/release/HoomanDigital/terraform-provider-nosana)](https://github.com/HoomanDigital/terraform-provider-nosana/releases)
+[![License](https://img.shields.io/github/license/HoomanDigital/terraform-provider-nosana)](LICENSE)
 
 ## 🚀 Quick Start
 
-**📖 For detailed setup instructions, see [SETUP.md](SETUP.md)**
+```hcl
+terraform {
+  required_providers {
+    nosana = {
+      source  = "registry.terraform.io/HoomanDigital/nosana"
+      version = "~> 0.1"
+    }
+  }
+}
 
-## Prerequisites
+provider "nosana" {
+  keypair_path   = "~/.config/solana/id.json"
+  network        = "mainnet-beta"
+  market_address = "nosScmHY2uR24Zh751PmGj9ww9QRNHewh9H59AfrT"
+}
 
-- **Go 1.21+**, **Terraform 1.0+**, **Node.js/npm**
-- **Nosana CLI**: `npm install -g @nosana/cli`
-- **Funded Nosana wallet** with SOL and NOS tokens
-
-### Quick Setup
-```bash
-# Clone and setup
-git clone https://github.com/hoomandigital/terraform-provider-nosana.git
-cd terraform-provider-nosana
-
-# Windows: .\dev.ps1 dev
-# Linux/macOS: ./dev.sh dev
+resource "nosana_job" "ai_workload" {
+  job_definition = jsonencode({
+    "ops": [{
+      "id": "ai-training",
+      "args": {
+        "image": "pytorch/pytorch:latest",
+        "gpu": true,
+        "env": {
+          "MODEL_NAME": "bert-base-uncased"
+        }
+      },
+      "type": "container/run"
+    }],
+    "type": "container",
+    "version": "0.1"
+  })
+  
+  wait_for_completion = false
+  completion_timeout_seconds = 600
+}
 ```
-
-## Development Commands
-
-### Windows Commands
-
-| Command | Description |
-|---------|-------------|
-| `.\dev.ps1 build` | Build the provider binary |
-| `.\dev.ps1 clean` | Remove build artifacts |
-| `.\dev.ps1 install` | Build and install provider locally |
-| `.\dev.ps1 init` | Initialize Terraform |
-| `.\dev.ps1 plan` | Run terraform plan |
-| `.\dev.ps1 apply` | Run terraform apply |
-| `.\dev.ps1 destroy` | Run terraform destroy |
-| `.\dev.ps1 test` | Run Go tests |
-| `.\dev.ps1 fmt` | Format Go code |
-| `.\dev.ps1 vet` | Run Go vet |
-| `.\dev.ps1 dev` | Full development cycle |
-| `.\dev.ps1 help` | Show all commands |
-
-### Linux/macOS Commands
-
-| Command | Description |
-|---------|-------------|
-| `./dev.sh build` | Build the provider binary |
-| `./dev.sh clean` | Remove build artifacts |
-| `./dev.sh install` | Build and install provider locally |
-| `./dev.sh init` | Initialize Terraform |
-| `./dev.sh plan` | Run terraform plan |
-| `./dev.sh apply` | Run terraform apply |
-| `./dev.sh destroy` | Run terraform destroy |
-| `./dev.sh test` | Run Go tests |
-| `./dev.sh fmt` | Format Go code |
-| `./dev.sh vet` | Run Go vet |
-| `./dev.sh dev` | Full development cycle |
-| `./dev.sh help` | Show all commands |
 
 ## 📋 What It Does
 
@@ -69,72 +57,12 @@ Deploy **AI/ML workloads**, **web services**, and **containerized applications**
 - 🔒 **Decentralized** - No single point of failure
 - 📊 **Terraform state management** - Full lifecycle support
 
-## Example Usage
-
-```hcl
-terraform {
-  required_providers {
-    nosana = {
-      source  = "app.terraform.io/codebrewery/nosana"
-      version = "~> 0.1"
-    }
-  }
-}
-
-provider "nosana" {
-  keypair_path   = var.keypair_path
-  network        = var.network
-  market_address = var.market_address
-}
-
-resource "nosana_job" "example" {
-  job_definition = jsonencode({
-    "ops": [
-      {
-        "id": "oneClickLLM",
-        "args": {
-          "env": {
-            "MODEL_NAME": "mistral",
-            "PORT": "8000"
-          },
-          "image": "docker.io/hoomanhq/oneclickllm:01",
-          "expose": 8000
-        },
-        "type": "container/run"
-      }
-    ],
-    "type": "container",
-    "version": "0.1"
-  })
-
-  wait_for_completion = false
-  completion_timeout_seconds = 600
-}
-```
-
-
-
-## 🏗️ Project Structure
-
-```
-terraform-provider-nosana/
-├── nosana/              # Provider source code
-│   ├── provider.go      # Provider configuration
-│   └── resource_nosana_job.go # Job resource implementation  
-├── examples/            # Usage examples
-│   ├── README.md        # Example documentation
-│   └── main.tf          # Working configurations
-├── SETUP.md             # Detailed setup guide
-├── DEV_GUIDE.md         # Development guide
-├── dev.ps1 / dev.sh     # Development scripts
-└── main.go              # Entry point
-```
-
 ## 📚 Examples
 
 Check out the [`examples/`](./examples/) directory for comprehensive usage examples:
 
-- **`sample.tf`** - Complete examples for web services, AI/ML workloads, and data processing
+- **`main.tf`** - Complete AI/ML workload example with GPU support
+- **`sample.tf`** - Web services, data processing, and multiple use cases
 - **`test.tf`** - Simple test configuration to verify your setup
 - **`README.md`** - Detailed documentation for all examples
 
@@ -146,6 +74,97 @@ terraform plan
 terraform apply
 ```
 
+## 🛠️ Prerequisites
+
+- **Terraform 1.0+**
+- **Nosana CLI**: `npm install -g @nosana/cli`
+- **Funded Nosana wallet** with SOL and NOS tokens
+- **Valid Solana keypair** (usually at `~/.config/solana/id.json`)
+
 ## 🔧 Development
 
-See [DEV_GUIDE.md](DEV_GUIDE.md) for development instructions.
+### Development Commands
+
+| Command | Description |
+|---------|-------------|
+| `./dev.sh build` | Build the provider binary |
+| `./dev.sh install` | Build and install provider locally |
+| `./dev.sh test` | Run Go tests |
+| `./dev.sh fmt` | Format Go code |
+| `./dev.sh dev` | Full development cycle |
+
+### Automated Releases
+
+This repository uses GitHub Actions for automated releases:
+
+1. **Create a new tag:** `git tag v0.2.0`
+2. **Push the tag:** `git push origin v0.2.0`
+3. **GitHub Actions automatically:**
+   - Builds binaries for all platforms
+   - Creates ZIP archives
+   - Generates SHA256SUMS and signatures
+   - Creates GitHub release
+   - Uploads all files
+
+The Terraform Registry will automatically discover and publish new releases!
+
+### Setup Release Automation
+
+Run the setup script to configure GitHub secrets:
+```bash
+./scripts/setup-secrets.sh
+```
+
+## 🏗️ Project Structure
+
+```
+terraform-provider-nosana/
+├── nosana/              # Provider source code
+│   ├── provider.go      # Provider configuration
+│   └── resource_nosana_job.go # Job resource implementation  
+├── examples/            # Usage examples
+│   ├── README.md        # Example documentation
+│   └── main.tf          # Working configurations
+├── scripts/             # Automation scripts
+│   └── setup-secrets.sh # GitHub secrets setup
+├── .github/workflows/   # CI/CD automation
+│   └── release.yml      # Automated release workflow
+├── SETUP.md             # Detailed setup guide
+├── DEV_GUIDE.md         # Development guide
+├── dev.sh               # Development script
+└── main.go              # Entry point
+```
+
+## 📖 Documentation
+
+- **[Provider Documentation](https://registry.terraform.io/providers/HoomanDigital/nosana/latest/docs)** - Official Terraform Registry docs
+- **[Setup Guide](SETUP.md)** - Detailed setup instructions
+- **[Development Guide](DEV_GUIDE.md)** - Contributing and development
+- **[Examples](examples/)** - Real-world usage examples
+
+## 🌍 Registry
+
+This provider is published on the [Terraform Registry](https://registry.terraform.io/providers/HoomanDigital/nosana) and available for public use.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Run `./dev.sh test`
+6. Submit a pull request
+
+## 📞 Support
+
+- **GitHub Issues**: [Report bugs or request features](https://github.com/HoomanDigital/terraform-provider-nosana/issues)
+- **Documentation**: [Terraform Registry](https://registry.terraform.io/providers/HoomanDigital/nosana)
+- **Examples**: [Example configurations](examples/)
+
+---
+
+**Built with ❤️ for the decentralized compute community**

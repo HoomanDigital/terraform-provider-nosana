@@ -1,8 +1,8 @@
-# Terraform Provider release workflow.
+# Terraform Provider release workflow with automated binary generation
 name: Release
 
 # This GitHub action creates a release when a tag that matches the pattern
-# "v*" (e.g. v0.1.0) is created.
+# "v*" (e.g. v0.1.0) is created and automatically builds all platform binaries
 on:
   push:
     tags:
@@ -21,16 +21,19 @@ jobs:
         with:
           # Allow goreleaser to access older tag information.
           fetch-depth: 0
+      
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
           cache: true
+      
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@v6
         id: import_gpg
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
+      
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
@@ -41,4 +44,81 @@ jobs:
           # GitHub sets the GITHUB_TOKEN secret automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
-          GO_VERSION: ${{ steps.setup-go.outputs.go-version }}
+
+  # Custom job to create proper Terraform Registry format
+  terraform-registry:
+    runs-on: ubuntu-latest
+    needs: goreleaser
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+      
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        id: import_gpg
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PASSPHRASE }}
+      
+      - name: Build Terraform Registry binaries
+        run: |
+          # Create dist directory
+          mkdir -p terraform-registry-dist
+          
+          # Define platforms
+          PLATFORMS=("linux_amd64" "linux_arm64" "darwin_amd64" "darwin_arm64" "windows_amd64")
+          
+          # Build for each platform
+          for platform in "${PLATFORMS[@]}"; do
+            os=$(echo $platform | cut -d'_' -f1)
+            arch=$(echo $platform | cut -d'_' -f2)
+            
+            echo "Building for $platform..."
+            
+            if [ "$os" = "windows" ]; then
+              output="terraform-registry-dist/terraform-provider-nosana_${GITHUB_REF_NAME#v}_${platform}.exe"
+            else
+              output="terraform-registry-dist/terraform-provider-nosana_${GITHUB_REF_NAME#v}_${platform}"
+            fi
+            
+            GOOS=$os GOARCH=$arch go build -o "$output" .
+            
+            # Create ZIP for this platform
+            cd terraform-registry-dist
+            if [ "$os" = "windows" ]; then
+              zip "terraform-provider-nosana_${GITHUB_REF_NAME#v}_${platform}.zip" "terraform-provider-nosana_${GITHUB_REF_NAME#v}_${platform}.exe"
+              rm "terraform-provider-nosana_${GITHUB_REF_NAME#v}_${platform}.exe"
+            else
+              zip "terraform-provider-nosana_${GITHUB_REF_NAME#v}_${platform}.zip" "terraform-provider-nosana_${GITHUB_REF_NAME#v}_${platform}"
+              rm "terraform-provider-nosana_${GITHUB_REF_NAME#v}_${platform}"
+            fi
+            cd ..
+          done
+          
+          # Create SHA256SUMS
+          cd terraform-registry-dist
+          shasum -a 256 *.zip > "terraform-provider-nosana_${GITHUB_REF_NAME#v}_SHA256SUMS"
+          
+          # Sign SHA256SUMS
+          gpg --detach-sign --armor "terraform-provider-nosana_${GITHUB_REF_NAME#v}_SHA256SUMS"
+          gpg --detach-sign --output "terraform-provider-nosana_${GITHUB_REF_NAME#v}_SHA256SUMS.sig" "terraform-provider-nosana_${GITHUB_REF_NAME#v}_SHA256SUMS"
+          
+          cd ..
+          
+          echo "Created files:"
+          ls -la terraform-registry-dist/
+      
+      - name: Upload Registry Assets to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: terraform-registry-dist/*
+          generate_release_notes: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

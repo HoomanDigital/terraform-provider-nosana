@@ -1,0 +1,16 @@
+{
+  "name": "terraform-provider-nosana-bridge",
+  "version": "1.0.0",
+  "description": "Node.js bridge scripts for Terraform Nosana provider using official SDK",
+  "type": "module",
+  "scripts": {
+    "install-deps": "npm install"
+  },
+  "dependencies": {
+    "@nosana/sdk": "latest",
+    "@solana/web3.js": "latest"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

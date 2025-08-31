@@ -8,10 +8,10 @@ terraform {
 }
 
 # Variables for provider configuration
-variable "keypair_path" {
-  description = "Path to Nosana keypair file"
+variable "private_key" {
+  description = "Solana private key in base58 format"
   type        = string
-  default     = ""  # Uses default ~/.nosana/nosana_key.json
+  sensitive   = true
 }
 
 variable "network" {
@@ -27,8 +27,8 @@ variable "market_address" {
 }
 
 provider "nosana" {
-  # Configuration for the published Nosana provider
-  keypair_path   = var.keypair_path
+  # Configuration using the new SDK integration
+  private_key    = var.private_key
   network        = var.network
   market_address = var.market_address
 }
