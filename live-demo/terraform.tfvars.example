@@ -1,0 +1,11 @@
+# Live Demo Configuration
+# Copy this to terraform.tfvars and add your actual values
+
+# Your Solana private key in base58 format
+private_key = "YOUR_BASE58_PRIVATE_KEY_HERE"
+
+# Optional: Override network (default: mainnet)
+# network = "devnet"
+
+# Optional: Override market address
+# market_address = "YOUR_CUSTOM_MARKET_ADDRESS"
