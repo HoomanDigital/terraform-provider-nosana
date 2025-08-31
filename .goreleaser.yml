@@ -62,7 +62,7 @@ release:
 
     **Full Changelog**: https://github.com/HoomanDigital/terraform-provider-nosana/compare/{{ .PreviousTag }}...{{ .Tag }}
 
-    The binaries published alongside this release are built with Go {{ .Env.GO_VERSION }} and signed with GPG for enhanced security.
+    The binaries published alongside this release are signed with GPG for enhanced security.
 
     ### 🚀 Installation
 
