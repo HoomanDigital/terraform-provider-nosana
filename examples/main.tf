@@ -1,7 +1,8 @@
 terraform {
   required_providers {
     nosana = {
-      source = "localhost/hoomandigital/nosana"
+      source  = "registry.terraform.io/HoomanDigital/nosana"
+      version = "~> 0.1"
     }
   }
 }
@@ -26,9 +27,8 @@ variable "market_address" {
 }
 
 provider "nosana" {
-  # Just set environment variable: $env:NOSANA_PRIVATE_KEY = "your_phantom_wallet_private_key"
-  # The provider automatically handles keypair setup!
-  
+  # Configuration for the published Nosana provider
+  keypair_path   = var.keypair_path
   network        = var.network
   market_address = var.market_address
 }
