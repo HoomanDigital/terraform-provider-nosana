@@ -22,6 +22,7 @@ func TestAccNosanaJob_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviders,
+		Providers:         testAccProviders, // Add this line
 		CheckDestroy:      testAccCheckNosanaJobDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -49,6 +50,7 @@ func TestAccNosanaJob_waitForCompletion(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviders,
+		Providers:         testAccProviders, // Add this line
 		CheckDestroy:      testAccCheckNosanaJobDestroy,
 		Steps: []resource.TestStep{
 			{
