@@ -2,7 +2,7 @@ terraform {
   required_providers {
     nosana = {
       source  = "registry.terraform.io/HoomanDigital/nosana"
-      version = "~> 0.1"
+      version = "~> 0.3"
     }
   }
 }
@@ -23,7 +23,7 @@ variable "network" {
 variable "market_address" {
   description = "Default market address for job submissions"
   type        = string
-  default     = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"  
+  default     = "HanragNudL4S4zFtpLQv85dn6QbdzCm7SNEWEb9sRp17"  
 }
 
 provider "nosana" {
@@ -51,7 +51,8 @@ resource "nosana_job" "ollama_server" {
             "ENABLE_STREAMING": "false",
             "SERVED_MODEL_NAME": "mistral",
             "TENSOR_PARALLEL_SIZE": "1",
-            "GPU_MEMORY_UTILIZATION": "0.9"
+            "GPU_MEMORY_UTILIZATION": "0.9",
+            "AIOHTTP_CLIENT_TIMEOUT": "3600"
           },
           "gpu": true,
           "image": "docker.io/hoomanhq/oneclickllm:stabllama",

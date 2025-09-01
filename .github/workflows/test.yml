@@ -55,8 +55,8 @@ jobs:
       matrix:
         # Test only essential Terraform versions for CLI-based provider
         terraform:
-          - '1.7.*'   # Stable
-          - '1.8.*'   # Latest
+          - '1.6.*'   # Older stable
+          - 'latest'  # Latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
