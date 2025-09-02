@@ -14,7 +14,7 @@ Before you begin, you will need:
 3.  **Nosana Keypair**: You need a funded Nosana wallet to pay for jobs.
     ```bash
     # Generate a new keypair (and save the seed phrase)
-    nosana-cli keys new
+    nosana address
 
     # Fund your new wallet with SOL and NOS tokens
     ```

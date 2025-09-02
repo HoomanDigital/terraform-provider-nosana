@@ -22,7 +22,7 @@ func TestAccNosanaJob_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
 		ProviderFactories: testAccProviders,
-		Providers:         testAccProviders, // Add this line
+		Providers:         testAccProviders, 
 		CheckDestroy:      testAccCheckNosanaJobDestroy,
 		Steps: []resource.TestStep{
 			{
