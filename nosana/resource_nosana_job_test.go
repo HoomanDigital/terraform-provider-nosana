@@ -1,8 +1,10 @@
 package nosana
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
@@ -16,13 +18,12 @@ func TestAccNosanaJob_basic(t *testing.T) {
 
 	// Skip the test if in normal unit test mode (requires real credentials)
 	if os.Getenv("TF_ACC") == "" {
-		t.Skip("Skipping acceptance test. Set TF_ACC=1 to run.")
+		t.Skip("TF_ACC not set, skipping acceptance test.")
 	}
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
-		ProviderFactories: testAccProviders,
-		Providers:         testAccProviders, 
+		ProviderFactories: testAccProviderFactories,
 		CheckDestroy:      testAccCheckNosanaJobDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -44,13 +45,12 @@ func TestAccNosanaJob_waitForCompletion(t *testing.T) {
 
 	// Skip the test if in normal unit test mode (requires real credentials)
 	if os.Getenv("TF_ACC") == "" {
-		t.Skip("Skipping acceptance test. Set TF_ACC=1 to run.")
+		t.Skip("TF_ACC not set, skipping acceptance test.")
 	}
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testAccPreCheck(t) },
-		ProviderFactories: testAccProviders,
-		Providers:         testAccProviders, // Add this line
+		ProviderFactories: testAccProviderFactories,
 		CheckDestroy:      testAccCheckNosanaJobDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -65,20 +65,66 @@ func TestAccNosanaJob_waitForCompletion(t *testing.T) {
 	})
 }
 
+func TestAccNosanaJob_update(t *testing.T) {
+	resourceName := "nosana_job.test"
+	jobName := acctest.RandString(10)
+
+	if os.Getenv("TF_ACC") == "" {
+		t.Skip("TF_ACC not set, skipping acceptance test.")
+	}
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:          func() { testAccPreCheck(t) },
+		ProviderFactories: testAccProviderFactories,
+		CheckDestroy:      testAccCheckNosanaJobDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccNosanaJobConfig_basic(jobName),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckNosanaJobExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "replicas", "1"),
+					resource.TestCheckResourceAttr(resourceName, "timeout", "300"),
+				),
+			},
+			{
+				Config: testAccNosanaJobConfig_update(jobName, 2, 600),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckNosanaJobExists(resourceName),
+					resource.TestCheckResourceAttr(resourceName, "replicas", "2"),
+					resource.TestCheckResourceAttr(resourceName, "timeout", "600"),
+				),
+			},
+		},
+	})
+}
+
 func testAccPreCheck(t *testing.T) {
 	// Check for required environment variables or provider configuration
-	if v := os.Getenv("NOSANA_PRIVATE_KEY"); v == "" {
-		if v := os.Getenv("NOSANA_KEYPAIR_PATH"); v == "" {
-			t.Fatal("NOSANA_PRIVATE_KEY or NOSANA_KEYPAIR_PATH must be set for acceptance tests")
-		}
+	if v := os.Getenv("NOSANA_MARKET_ADDRESS"); v == "" {
+		t.Fatal("NOSANA_MARKET_ADDRESS must be set for acceptance tests")
 	}
 }
 
-var testAccProviders = testAccProviderFactories
-
 func testAccCheckNosanaJobDestroy(s *terraform.State) error {
-	// Since Nosana jobs are ephemeral and cannot be destroyed in the traditional sense,
-	// we consider them "destroyed" when they're completed or no longer running
+	client := testAccProvider().Meta().(*nosanaClient)
+
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "nosana_job" {
+			continue
+		}
+
+		// Try to get the deployment to see if it still exists
+		_, err := client.APIClient.GetDeployment(context.Background(), rs.Primary.ID)
+		if err == nil {
+			return fmt.Errorf("Nosana job %s still exists", rs.Primary.ID)
+		}
+
+		// Check if it's a 404 error (expected for destroyed resources)
+		if !strings.Contains(err.Error(), "404") {
+			return fmt.Errorf("Unexpected error checking for destroyed job: %s", err)
+		}
+	}
+
 	return nil
 }
 
@@ -90,11 +136,15 @@ func testAccCheckNosanaJobExists(resourceName string) resource.TestCheckFunc {
 		}
 
 		if rs.Primary.ID == "" {
-			return fmt.Errorf("No Job ID is set")
+			return fmt.Errorf("No Nosana job ID is set")
 		}
 
-		// In a real implementation, you would check if the job exists via API
-		// For now, we just verify the ID is set
+		client := testAccProvider().Meta().(*nosanaClient)
+		_, err := client.APIClient.GetDeployment(context.Background(), rs.Primary.ID)
+		if err != nil {
+			return fmt.Errorf("Error fetching Nosana job: %s", err)
+		}
+
 		return nil
 	}
 }
@@ -102,18 +152,21 @@ func testAccCheckNosanaJobExists(resourceName string) resource.TestCheckFunc {
 func testAccNosanaJobConfig_basic(jobName string) string {
 	return fmt.Sprintf(`
 provider "nosana" {
-  network        = "devnet"
-  market_address = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"
+  use_local_wallet = true
+  market_address   = "%s"
 }
 
 resource "nosana_job" "test" {
-  job_definition = jsonencode({
+  job_content = jsonencode({
     "ops": [
       {
-        "id": "%s",
+        "id": "test-job",
         "args": {
+          "env": {
+            "TEST_VAR": "test_value"
+          },
           "image": "alpine:latest",
-          "cmd": ["echo", "hello world"]
+          "expose": 8080
         },
         "type": "container/run"
       }
@@ -124,28 +177,34 @@ resource "nosana_job" "test" {
     "type": "container",
     "version": "0.1"
   })
+  replicas = 1
+  timeout  = 300
+  strategy = "SIMPLE"
 
-  wait_for_completion = false
+  wait_for_completion        = false
   completion_timeout_seconds = 300
 }
-`, jobName)
+`, os.Getenv("NOSANA_MARKET_ADDRESS"))
 }
 
 func testAccNosanaJobConfig_waitForCompletion(jobName string) string {
 	return fmt.Sprintf(`
 provider "nosana" {
-  network        = "devnet"
-  market_address = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"
+  use_local_wallet = true
+  market_address   = "%s"
 }
 
 resource "nosana_job" "test" {
-  job_definition = jsonencode({
+  job_content = jsonencode({
     "ops": [
       {
-        "id": "%s",
+        "id": "test-job-wait",
         "args": {
+          "env": {
+            "TEST_VAR": "test_value"
+          },
           "image": "alpine:latest",
-          "cmd": ["echo", "hello world"]
+          "expose": 8080
         },
         "type": "container/run"
       }
@@ -156,9 +215,50 @@ resource "nosana_job" "test" {
     "type": "container",
     "version": "0.1"
   })
+  replicas = 1
+  timeout  = 600
+  strategy = "SIMPLE"
 
-  wait_for_completion = true
+  wait_for_completion        = true
   completion_timeout_seconds = 600
 }
-`, jobName)
+`, os.Getenv("NOSANA_MARKET_ADDRESS"))
+}
+
+func testAccNosanaJobConfig_update(jobName string, replicas, timeout int) string {
+	return fmt.Sprintf(`
+provider "nosana" {
+  use_local_wallet = true
+  market_address   = "%s"
+}
+
+resource "nosana_job" "test" {
+  job_content = jsonencode({
+    "ops": [
+      {
+        "id": "test-job-update",
+        "args": {
+          "env": {
+            "TEST_VAR": "test_value"
+          },
+          "image": "alpine:latest",
+          "expose": 8080
+        },
+        "type": "container/run"
+      }
+    ],
+    "meta": {
+      "trigger": "terraform-test"
+    },
+    "type": "container",
+    "version": "0.1"
+  })
+  replicas = %d
+  timeout  = %d
+  strategy = "SIMPLE"
+
+  wait_for_completion        = false
+  completion_timeout_seconds = 300
+}
+`, os.Getenv("NOSANA_MARKET_ADDRESS"), replicas, timeout)
 }

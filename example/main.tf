@@ -1,25 +1,13 @@
 terraform {
   required_providers {
     nosana = {
-      source  = "registry.terraform.io/HoomanDigital/nosana"
-      version = "~> 0.3"
+      source  = "HoomanDigital/nosana"
+      version = "~>0.1"
     }
   }
 }
 
 # Variables for provider configuration
-variable "keypair_path" {
-  description = "Path to Nosana keypair file"
-  type        = string
-  default     = ""  # Uses default ~/.nosana/nosana_key.json
-}
-
-variable "network" {
-  description = "The Nosana network to connect to"
-  type        = string
-  default     = "mainnet"
-}
-
 variable "market_address" {
   description = "Default market address for job submissions"
   type        = string
@@ -27,14 +15,13 @@ variable "market_address" {
 }
 
 provider "nosana" {
-  # Configuration for the published Nosana provider
-  keypair_path   = var.keypair_path
-  network        = var.network
+  # Use your specific private key
+  private_key    = "5YeqfFZJfJf8JRPdUqCzNjUfJuMYc7KyxkTr63T8TgcBVwPkfKYWB7yG566v9jaMoFPvDrBLnZQenAfjRVtur5ob"
   market_address = var.market_address
 }
 
 resource "nosana_job" "ollama_server" {
-  job_definition = jsonencode({
+  job_content = jsonencode({
     "ops": [
       {
         "id": "oneClickLLM",
@@ -67,8 +54,11 @@ resource "nosana_job" "ollama_server" {
     "type": "container",
     "version": "0.1"
   })
+  replicas = 1
+  timeout  = 300
+  strategy = "SIMPLE"
 
-  wait_for_completion = false
+  wait_for_completion        = false
   completion_timeout_seconds = 60
 }
 

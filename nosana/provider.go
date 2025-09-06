@@ -3,19 +3,18 @@ package nosana
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
-	"math/big"
 	"os"
-	"os/exec"
-	"os/user"
 	"path/filepath"
-	"regexp"
-	"strings"
 
+	"github.com/gagliardetto/solana-go"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/mr-tron/base58"
 )
 
 // Provider returns a *schema.Provider.
@@ -33,13 +32,13 @@ func Provider() *schema.Provider {
 				Type:        schema.TypeString,
 				Optional:    true,
 				DefaultFunc: schema.EnvDefaultFunc("NOSANA_KEYPAIR_PATH", ""),
-				Description: "Path to Nosana keypair file. If not provided and no private_key is set, uses default ~/.nosana/nosana_key.json",
+				Description: "Path to Solana keypair file. If not provided, will use local wallet.",
 			},
-			"network": {
-				Type:        schema.TypeString,
+			"use_local_wallet": {
+				Type:        schema.TypeBool,
 				Optional:    true,
-				Default:     "mainnet",
-				Description: "The Nosana network to connect to (mainnet or devnet).",
+				Default:     true,
+				Description: "Whether to use a local wallet (generated automatically if needed).",
 			},
 			"market_address": {
 				Type:        schema.TypeString,
@@ -57,315 +56,207 @@ func Provider() *schema.Provider {
 	}
 }
 
-// nosanaClient represents a client for interacting with the Nosana CLI.
+// nosanaClient represents a client for interacting with the Nosana API.
 type nosanaClient struct {
-	PrivateKey    string
-	KeypairPath   string
-	Network       string
+	APIClient     *NosanaAPIClient
 	MarketAddress string
 }
 
-// newNosanaClient creates a new Nosana CLI client.
-func newNosanaClient(privateKey, keypairPath, network, marketAddress string) (*nosanaClient, error) {
-	log.Printf("[INFO] Initializing Nosana client for network: %s, market: %s", network, marketAddress)
-
-	// Determine keypair strategy: private key takes precedence over keypair path
-	var resolvedKeypairPath string
-	var err error
-
-	if privateKey != "" {
-		// Private key provided - create/update keypair file
-		log.Printf("[INFO] Using provided private key, setting up keypair file")
-		resolvedKeypairPath, err = setupKeypairFromPrivateKey(privateKey, keypairPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to setup keypair from private key: %w", err)
-		}
-	} else {
-		// No private key - resolve existing keypair path
-		resolvedKeypairPath, err = resolveKeypairPath(keypairPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve keypair path: %w", err)
-		}
-	}
-
-	client := &nosanaClient{
-		PrivateKey:    privateKey,
-		KeypairPath:   resolvedKeypairPath,
-		Network:       network,
-		MarketAddress: marketAddress,
-	}
-
-	// Verify Nosana CLI is available
-	output, err := exec.Command("nosana", "--version").CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("nosana CLI not found. Please install it with: npm install -g @nosana/cli. Error: %w", err)
-	}
-
-	log.Printf("[INFO] Nosana CLI version: %s", strings.TrimSpace(string(output)))
-
-	// Verify keypair file exists and is accessible
-	if err := validateKeypairFile(resolvedKeypairPath); err != nil {
-		return nil, fmt.Errorf("keypair validation failed: %w", err)
-	}
-
-	// Test CLI access with the keypair
-	log.Printf("[INFO] Skipping wallet validation - CLI setup appears successful")
-	// TODO: Enable wallet validation once ANSI parsing is working
-	// return c.testNosanaCLIAccess()
-	// if err := client.testNosanaCLIAccess(); err != nil {
-	//     return nil, fmt.Errorf("failed to access Nosana CLI: %w", err)
-	// }
-
-	log.Printf("[INFO] Nosana CLI client initialized successfully")
-	return client, nil
+// SolanaKeypair represents a Solana keypair in JSON format
+type SolanaKeypair struct {
+	PublicKey  []int `json:"publicKey"`
+	PrivateKey []int `json:"privateKey"`
 }
 
-// resolveKeypairPath resolves the keypair file path, using default if empty
-func resolveKeypairPath(keypairPath string) (string, error) {
-	if keypairPath != "" {
-		// Use provided path
-		absPath, err := filepath.Abs(keypairPath)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve absolute path for %s: %w", keypairPath, err)
-		}
-		return absPath, nil
-	}
-
-	// Use default Nosana CLI keypair location
-	usr, err := user.Current()
+// getLocalWalletPath returns the path for the local wallet file
+func getLocalWalletPath() string {
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to get current user: %w", err)
+		// Fallback to current directory if home directory is not accessible
+		return "./terraform-provider-nosana-wallet.json"
 	}
-
-	defaultPath := filepath.Join(usr.HomeDir, ".nosana", "nosana_key.json")
-	return defaultPath, nil
+	
+	configDir := filepath.Join(homeDir, ".config", "terraform-provider-nosana")
+	os.MkdirAll(configDir, 0700) // Create directory with restricted permissions
+	
+	return filepath.Join(configDir, "wallet.json")
 }
 
-// setupKeypairFromPrivateKey converts a base58 private key to Nosana keypair format
-func setupKeypairFromPrivateKey(privateKey, keypairPath string) (string, error) {
-	// Determine target keypair path
-	var targetPath string
-	if keypairPath != "" {
-		var err error
-		targetPath, err = filepath.Abs(keypairPath)
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve keypair path: %w", err)
-		}
-	} else {
-		// Use default Nosana CLI location
-		usr, err := user.Current()
-		if err != nil {
-			return "", fmt.Errorf("failed to get current user: %w", err)
-		}
-		targetPath = filepath.Join(usr.HomeDir, ".nosana", "nosana_key.json")
-	}
-
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create keypair directory: %w", err)
-	}
-
-	// Convert base58 private key to byte array
-	keyBytes, err := base58Decode(privateKey)
+// generateLocalWallet creates a new Solana keypair and saves it to disk
+func generateLocalWallet() (string, error) {
+	// Generate a new Ed25519 keypair
+	_, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode private key: %w", err)
+		return "", fmt.Errorf("failed to generate keypair: %w", err)
 	}
 
-	if len(keyBytes) != 64 {
-		return "", fmt.Errorf("invalid private key length: expected 64 bytes, got %d", len(keyBytes))
+	// Convert to Solana format
+	solanaPrivateKey := solana.PrivateKey(privateKey)
+	solanaPublicKey := solanaPrivateKey.PublicKey()
+
+	// Create keypair in the format expected by Solana tools
+	keypair := SolanaKeypair{
+		PublicKey:  make([]int, len(solanaPublicKey)),
+		PrivateKey: make([]int, len(solanaPrivateKey)),
 	}
 
-	// Backup existing keypair if it exists
-	if _, err := os.Stat(targetPath); err == nil {
-		backupPath := targetPath + ".backup"
-		if err := os.Rename(targetPath, backupPath); err != nil {
-			log.Printf("[WARN] Failed to backup existing keypair: %v", err)
-		} else {
-			log.Printf("[INFO] Backed up existing keypair to %s", backupPath)
-		}
+	// Convert bytes to int array (Solana JSON format)
+	for i, b := range solanaPublicKey {
+		keypair.PublicKey[i] = int(b)
+	}
+	for i, b := range solanaPrivateKey {
+		keypair.PrivateKey[i] = int(b)
 	}
 
-	// Convert to JSON array format and write to file
-	keyArray := make([]int, len(keyBytes))
-	for i, b := range keyBytes {
-		keyArray[i] = int(b)
-	}
-
-	jsonData, err := json.Marshal(keyArray)
+	// Save to file
+	walletPath := getLocalWalletPath()
+	keypairData, err := json.MarshalIndent(keypair, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal keypair: %w", err)
 	}
 
-	if err := os.WriteFile(targetPath, jsonData, 0600); err != nil {
-		return "", fmt.Errorf("failed to write keypair file: %w", err)
-	}
-
-	log.Printf("[INFO] Keypair file created at %s", targetPath)
-	return targetPath, nil
-}
-
-// base58Decode decodes a base58 string to bytes (simplified for Solana keys)
-func base58Decode(s string) ([]byte, error) {
-	alphabet := "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-
-	// Convert string to big integer
-	result := big.NewInt(0)
-	base := big.NewInt(58)
-
-	for _, char := range s {
-		index := strings.IndexRune(alphabet, char)
-		if index == -1 {
-			return nil, fmt.Errorf("invalid base58 character: %c", char)
-		}
-		result.Mul(result, base)
-		result.Add(result, big.NewInt(int64(index)))
-	}
-
-	// Convert to bytes
-	bytes := result.Bytes()
-
-	// Add leading zeros for '1' characters
-	leadingOnes := 0
-	for _, char := range s {
-		if char == '1' {
-			leadingOnes++
-		} else {
-			break
-		}
-	}
-
-	return append(make([]byte, leadingOnes), bytes...), nil
-}
-
-// validateKeypairFile checks if the keypair file exists and is readable
-func validateKeypairFile(keypairPath string) error {
-	// Check if file exists
-	if _, err := os.Stat(keypairPath); os.IsNotExist(err) {
-		return fmt.Errorf("keypair file not found at %s. Run 'nosana address' to create it", keypairPath)
-	} else if err != nil {
-		return fmt.Errorf("failed to access keypair file at %s: %w", keypairPath, err)
-	}
-
-	// Check if file is readable
-	file, err := os.Open(keypairPath)
+	err = ioutil.WriteFile(walletPath, keypairData, 0600) // Restricted permissions
 	if err != nil {
-		return fmt.Errorf("cannot read keypair file at %s: %w", keypairPath, err)
-	}
-	defer file.Close()
-
-	// Basic validation - check if it's a valid JSON file
-	var keyData interface{}
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&keyData); err != nil {
-		return fmt.Errorf("keypair file at %s is not valid JSON: %w", keypairPath, err)
+		return "", fmt.Errorf("failed to write wallet file: %w", err)
 	}
 
-	log.Printf("[INFO] Keypair file validated successfully: %s", keypairPath)
-	return nil
+	log.Printf("[INFO] Generated new local wallet at: %s", walletPath)
+	log.Printf("[INFO] Public key: %s", solanaPublicKey.String())
+	log.Printf("[INFO] IMPORTANT: Fund this wallet with SOL and NOS tokens!")
+
+	// Return the private key in base58 format for API client
+	return base58.Encode(solanaPrivateKey), nil
 }
 
-// removeANSIEscapeSequences removes ANSI color codes and control characters from CLI output
-func removeANSIEscapeSequences(output string) string {
-	// Remove ANSI color codes from the output
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[mGKHF]`) // Corrected: double backslash for regex escape
-	cleanOutput := ansiRegex.ReplaceAllString(output, "")
-	// Also remove any remaining control characters
-	cleanOutput = regexp.MustCompile(`[\x00-\x1f\x7f-\x9f]`).ReplaceAllString(cleanOutput, "") // Corrected: double backslash for regex escape
-	return cleanOutput
-}
+// loadLocalWallet loads an existing wallet from disk
+func loadLocalWallet() (string, error) {
+	walletPath := getLocalWalletPath()
+	
+	// Check if wallet file exists
+	if _, err := os.Stat(walletPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("wallet file not found at %s", walletPath)
+	}
 
-// testNosanaCLIAccess tests if the CLI can access the wallet
-func (c *nosanaClient) testNosanaCLIAccess() error {
-	// Try to get the wallet address to verify CLI access
-	output, err := c.runNosanaCommand("address")
+	// Read and parse the wallet file
+	keypairData, err := ioutil.ReadFile(walletPath)
 	if err != nil {
-		return fmt.Errorf("failed to get wallet address: %w", err)
+		return "", fmt.Errorf("failed to read wallet file: %w", err)
 	}
 
-	// Extract address from output
-	log.Printf("[DEBUG] Parsing nosana address output: %q", output)
-
-	// Remove ANSI color codes from the output
-	cleanOutput := removeANSIEscapeSequences(output)
-
-	lines := strings.Split(strings.TrimSpace(cleanOutput), "\n")
-	var address string
-	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		log.Printf("[DEBUG] Line %d: %q", i, line)
-
-		// Look for "Wallet:" prefix with flexible whitespace handling
-		if strings.Contains(line, "Wallet:") {
-			// Split on "Wallet:" and get everything after it
-			idx := strings.Index(line, "Wallet:")
-			if idx != -1 {
-				addressPart := line[idx+7:] // Skip "Wallet:"
-				// Remove tabs, spaces, and extract the address
-				addressPart = strings.TrimSpace(addressPart)
-				// Split by whitespace and take the first non-empty part
-				fields := strings.Fields(addressPart)
-				if len(fields) > 0 {
-					address = fields[0]
-					log.Printf("[DEBUG] Found wallet address: %q", address)
-					break
-				}
-			}
-		}
+	var keypair SolanaKeypair
+	err = json.Unmarshal(keypairData, &keypair)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse wallet file: %w", err)
 	}
 
-	if address == "" {
-		return fmt.Errorf("could not extract wallet address from CLI output: %s", output)
+	// Convert back to bytes
+	privateKeyBytes := make([]byte, len(keypair.PrivateKey))
+	for i, b := range keypair.PrivateKey {
+		privateKeyBytes[i] = byte(b)
 	}
 
-	log.Printf("[INFO] Nosana wallet address: %s", address)
-	return nil
+	// Validate the private key
+	if len(privateKeyBytes) != ed25519.PrivateKeySize {
+		return "", fmt.Errorf("invalid private key length in wallet file")
+	}
+
+	// Return the private key in base58 format
+	return base58.Encode(privateKeyBytes), nil
 }
 
-// runNosanaCommand executes a Nosana CLI command and returns the output
-func (c *nosanaClient) runNosanaCommand(args ...string) (string, error) {
-	cmd := exec.Command("nosana", args...)
-	cmd.Env = append(os.Environ(),
-		"CI=true",             // Common CI environment variable
-		"TERM=dumb",           // Disable terminal features
-		"NO_COLOR=1",          // Disable colors
-		"COLUMNS=80",          // Set terminal width
-		"LINES=24",            // Set terminal height
-		"NODE_ENV=production", // Disable development features
-	)
-	// Set working directory and environment
-	if c.KeypairPath != "" {
-		// Set the NOSANA_WALLET environment variable to point to our keypair
-		cmd.Env = append(cmd.Env, "NOSANA_WALLET="+c.KeypairPath)
-
-		// Also try setting the keypair directory
-		keypairDir := filepath.Dir(c.KeypairPath)
-		cmd.Env = append(cmd.Env, "NOSANA_HOME="+keypairDir)
+// getPrivateKey determines the private key to use based on configuration
+func getPrivateKey(d *schema.ResourceData) (string, error) {
+	// Priority: 1. Explicit private_key, 2. keypair_path, 3. local wallet
+	
+	// Check for explicit private key
+	if privateKey := d.Get("private_key").(string); privateKey != "" {
+		log.Printf("[INFO] Using explicit private key")
+		return privateKey, nil
 	}
 
-	// Set network if specified
-	if c.Network != "" && c.Network != "mainnet" {
-		cmd.Env = append(cmd.Env, "NOSANA_NETWORK="+c.Network)
+	// Check for keypair path
+	if keypairPath := d.Get("keypair_path").(string); keypairPath != "" {
+		log.Printf("[INFO] Loading keypair from: %s", keypairPath)
+		return loadKeypairFromFile(keypairPath)
 	}
 
-	log.Printf("[DEBUG] Running command: nosana %s", strings.Join(args, " "))
+	// Use local wallet
+	useLocalWallet := d.Get("use_local_wallet").(bool)
+	if !useLocalWallet {
+		return "", fmt.Errorf("no authentication method configured. Set private_key, keypair_path, or enable use_local_wallet")
+	}
 
-	// Use regular command execution instead of pty (pty doesn't work on Windows)
-	output, err := cmd.CombinedOutput()
+	log.Printf("[INFO] Using local wallet")
+	
+	// Try to load existing wallet first
+	privateKey, err := loadLocalWallet()
 	if err != nil {
-		return string(output), fmt.Errorf("command failed with exit code: %w", err)
+		log.Printf("[INFO] No existing wallet found, generating new one...")
+		// Generate new wallet if none exists
+		return generateLocalWallet()
 	}
 
-	return string(output), nil
-} // providerConfigure is called once at the start of a Terraform run.
+	log.Printf("[INFO] Loaded existing local wallet")
+	return privateKey, nil
+}
+
+// loadKeypairFromFile loads a Solana keypair from a JSON file
+func loadKeypairFromFile(filePath string) (string, error) {
+	keypairData, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read keypair file: %w", err)
+	}
+
+	var keypair SolanaKeypair
+	err = json.Unmarshal(keypairData, &keypair)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse keypair file: %w", err)
+	}
+
+	// Convert back to bytes
+	privateKeyBytes := make([]byte, len(keypair.PrivateKey))
+	for i, b := range keypair.PrivateKey {
+		privateKeyBytes[i] = byte(b)
+	}
+
+	// Validate the private key
+	if len(privateKeyBytes) != ed25519.PrivateKeySize {
+		return "", fmt.Errorf("invalid private key length in keypair file")
+	}
+
+	// Return the private key in base58 format
+	return base58.Encode(privateKeyBytes), nil
+}
+
+// newNosanaClient creates a new Nosana API client.
+func newNosanaClient(privateKey, marketAddress string) (*nosanaClient, error) {
+	log.Printf("[INFO] Initializing Nosana client for market: %s", marketAddress)
+
+	apiClient, err := NewNosanaAPIClient(privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Nosana API client: %w", err)
+	}
+
+	client := &nosanaClient{
+		APIClient:     apiClient,
+		MarketAddress: marketAddress,
+	}
+	log.Printf("[INFO] Nosana API client initialized successfully")
+	return client, nil
+}
+
+// providerConfigure is called once at the start of a Terraform run.
 func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
-	privateKey := d.Get("private_key").(string)
-	keypairPath := d.Get("keypair_path").(string)
-	network := d.Get("network").(string)
 	marketAddress := d.Get("market_address").(string)
 
+	// Get private key using the new local wallet system
+	privateKey, err := getPrivateKey(d)
+	if err != nil {
+		return nil, diag.FromErr(fmt.Errorf("failed to get private key: %w", err))
+	}
+
 	// Create a new Nosana client with the provided configuration.
-	client, err := newNosanaClient(privateKey, keypairPath, network, marketAddress)
+	client, err := newNosanaClient(privateKey, marketAddress)
 	if err != nil {
 		return nil, diag.FromErr(fmt.Errorf("failed to configure Nosana provider: %w", err))
 	}
