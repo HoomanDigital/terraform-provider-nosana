@@ -11,7 +11,7 @@ terraform {
 variable "market_address" {
   description = "Default market address for job submissions"
   type        = string
-  default     = "HanragNudL4S4zFtpLQv85dn6QbdzCm7SNEWEb9sRp17"  
+  default     = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"  # Updated to correct market address
 }
 
 provider "nosana" {
@@ -55,7 +55,7 @@ resource "nosana_job" "ollama_server" {
     "version": "0.1"
   })
   replicas = 1
-  timeout  = 300
+  timeout  = 600  # Increased timeout for model loading
   strategy = "SIMPLE"
 
   wait_for_completion        = false
@@ -68,4 +68,8 @@ output "job_id" {
 
 output "job_status" {
   value = nosana_job.ollama_server.status
+}
+
+output "job_endpoints" {
+  value = nosana_job.ollama_server.endpoints
 }
