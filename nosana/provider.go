@@ -45,6 +45,11 @@ func Provider() *schema.Provider {
 				Required:    true,
 				Description: "Default market address for job submissions.",
 			},
+			"rpc_url": {
+				Type:        schema.TypeString,
+				Optional:    true,
+				Description: "Solana RPC URL for blockchain transactions. Use a fast RPC for better reliability.",
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
 			"nosana_job": resourceNosanaJob(),
@@ -60,6 +65,7 @@ func Provider() *schema.Provider {
 type nosanaClient struct {
 	APIClient     *NosanaAPIClient
 	MarketAddress string
+	RpcURL        string
 }
 
 // SolanaKeypair represents a Solana keypair in JSON format
@@ -229,10 +235,15 @@ func loadKeypairFromFile(filePath string) (string, error) {
 }
 
 // newNosanaClient creates a new Nosana API client.
-func newNosanaClient(privateKey, marketAddress string) (*nosanaClient, error) {
+func newNosanaClient(privateKey, marketAddress, rpcURL string) (*nosanaClient, error) {
 	log.Printf("[INFO] Initializing Nosana client for market: %s", marketAddress)
+	if rpcURL != "" {
+		log.Printf("[INFO] Using RPC URL: %s", rpcURL)
+	} else {
+		log.Printf("[INFO] No RPC URL configured, using Nosana backend for blockchain operations")
+	}
 
-	apiClient, err := NewNosanaAPIClient(privateKey)
+	apiClient, err := NewNosanaAPIClient(privateKey, rpcURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Nosana API client: %w", err)
 	}
@@ -240,6 +251,7 @@ func newNosanaClient(privateKey, marketAddress string) (*nosanaClient, error) {
 	client := &nosanaClient{
 		APIClient:     apiClient,
 		MarketAddress: marketAddress,
+		RpcURL:        rpcURL,
 	}
 	log.Printf("[INFO] Nosana API client initialized successfully")
 	return client, nil
@@ -248,6 +260,7 @@ func newNosanaClient(privateKey, marketAddress string) (*nosanaClient, error) {
 // providerConfigure is called once at the start of a Terraform run.
 func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}, diag.Diagnostics) {
 	marketAddress := d.Get("market_address").(string)
+	rpcURL := d.Get("rpc_url").(string)
 
 	// Get private key using the new local wallet system
 	privateKey, err := getPrivateKey(d)
@@ -256,7 +269,7 @@ func providerConfigure(ctx context.Context, d *schema.ResourceData) (interface{}
 	}
 
 	// Create a new Nosana client with the provided configuration.
-	client, err := newNosanaClient(privateKey, marketAddress)
+	client, err := newNosanaClient(privateKey, marketAddress, rpcURL)
 	if err != nil {
 		return nil, diag.FromErr(fmt.Errorf("failed to configure Nosana provider: %w", err))
 	}

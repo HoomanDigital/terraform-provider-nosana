@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     nosana = {
-      source = "localhost/hoomandigital/nosana"
+      source = "hoomandigital.com/terraform/nosana"
     }
   }
 }
@@ -33,34 +33,34 @@ provider "nosana" {
 
 resource "nosana_job" "ollama_server" {
   job_content = jsonencode({
+    "meta": {
+      "trigger": "terraform"
+    },
     "ops": [
       {
-        "id": "oneClickLLM",
         "args": {
           "env": {
-            "PORT": "8000",
             "BLOCK_SIZE": "8",
-            "MODEL_NAME": "mistral",
-            "SWAP_SPACE": "4",
-            "MEMORY_LIMIT": "NAN",
-            "QUANTIZATION": "NAN",
-            "MAX_MODEL_LEN": "NAN",
-            "PARAMETER_SIZE": "34B",
             "ENABLE_STREAMING": "false",
+            "GPU_MEMORY_UTILIZATION": "0.9",
+            "MAX_MODEL_LEN": "NAN",
+            "MEMORY_LIMIT": "NAN",
+            "MODEL_NAME": "mistral",
+            "PARAMETER_SIZE": "34B",
+            "PORT": "8000",
+            "QUANTIZATION": "NAN",
             "SERVED_MODEL_NAME": "mistral",
-            "TENSOR_PARALLEL_SIZE": "1",
-            "GPU_MEMORY_UTILIZATION": "0.9"
+            "SWAP_SPACE": "4",
+            "TENSOR_PARALLEL_SIZE": "1"
           },
+          "expose": 8000,
           "gpu": true,
-          "image": "docker.io/hoomanhq/oneclickllm:stabllama",
-          "expose": 8000
+          "image": "docker.io/hoomanhq/oneclickllm:stabllama"
         },
+        "id": "oneClickLLM",
         "type": "container/run"
       }
     ],
-    "meta": {
-      "trigger": "terraform-demo"
-    },
     "type": "container",
     "version": "0.1"
   })

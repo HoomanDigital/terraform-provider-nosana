@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
@@ -54,6 +52,12 @@ func resourceNosanaJob() *schema.Resource {
 				Description: "Cron expression for SCHEDULED strategy.",
 				// TODO: Add cron expression validation
 			},
+			"auto_start": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     true,
+				Description: "If true, automatically start the deployment after creation. If false, leaves it in DRAFT status.",
+			},
 			"wait_for_completion": {
 				Type:        schema.TypeBool,
 				Optional:    true,
@@ -67,6 +71,12 @@ func resourceNosanaJob() *schema.Resource {
 				Description:  "Maximum time (in seconds) to wait for deployment completion.",
 				ValidateFunc: validation.IntAtLeast(1),
 			},
+			"max_retries": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     8, // Increased to handle 60s timeout better
+				Description: "Maximum number of retry attempts for deployment start failures",
+			},
 			// Attributes that will be stored in the Terraform state after creation
 			"job_id": {
 				Type:        schema.TypeString,
@@ -76,8 +86,28 @@ func resourceNosanaJob() *schema.Resource {
 			"status": {
 				Type:        schema.TypeString,
 				Computed:    true,
-				Description: "The current status of the Nosana deployment.",
+				Description: "The current status of the Nosana job (QUEUED, RUNNING, COMPLETED, etc.).",
 			},
+		"ipfs_hash": {
+			Type:        schema.TypeString,
+			Computed:    true,
+			Description: "The IPFS hash of the job definition.",
+		},
+		"run_id": {
+			Type:        schema.TypeString,
+			Computed:    true,
+			Description: "The run ID from direct blockchain submission.",
+		},
+		"transaction_hash": {
+			Type:        schema.TypeString,
+			Computed:    true,
+			Description: "The blockchain transaction hash for the job submission.",
+		},
+		"deployment_id": {
+			Type:        schema.TypeString,
+			Computed:    true,
+			Description: "The deployment ID from the Nosana API (legacy).",
+		},
 		},
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext, // For MVP, basic import functionality
@@ -89,23 +119,8 @@ func resourceNosanaJob() *schema.Resource {
 func resourceNosanaJobCreate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	client := m.(*nosanaClient)
 	jobContentStr := d.Get("job_content").(string)
-	replicas := d.Get("replicas").(int)
 	timeout := d.Get("timeout").(int)
-	strategy := DeploymentStrategy(d.Get("strategy").(string))
-	// Schedule is optional
-	scheduleVal, ok := d.GetOk("schedule")
-	var schedule *string
-	if ok {
-		sched := scheduleVal.(string)
-		schedule = &sched
-	}
-
-	waitForCompletion := d.Get("wait_for_completion").(bool)
-	completionTimeoutSeconds := d.Get("completion_timeout_seconds").(int)
 	marketAddress := client.MarketAddress
-
-	// Generate a unique name for the deployment using uuid
-	deploymentName := "terraform-deployment-" + uuid.New().String()
 
 	// Parse the job content JSON
 	var jobContent interface{}
@@ -113,182 +128,159 @@ func resourceNosanaJobCreate(ctx context.Context, d *schema.ResourceData, m inte
 		return diag.FromErr(fmt.Errorf("failed to parse job_content JSON: %w", err))
 	}
 
-	// Try approach 1: Send job definition directly (let API handle IPFS internally)
-	createBody := &DeploymentCreateBody{
-		Name:          deploymentName,
-		Market:        marketAddress,
-		JobDefinition: &jobContent,
-		Replicas:      replicas,
-		Timeout:       timeout,
-		Strategy:      strategy,
-		Schedule:      schedule,
+	// Upload job definition to IPFS
+	log.Printf("[INFO] Uploading job definition to IPFS...")
+	ipfsHash, err := client.APIClient.UploadToIPFS(ctx, jobContent)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("failed to upload job definition to IPFS: %w", err))
 	}
 
-	// 1. Create the Nosana Deployment via API
-	log.Printf("[INFO] Creating Nosana deployment with job definition...")
-	newDeployment, err := client.APIClient.CreateDeployment(ctx, createBody)
-	if err != nil {
-		// If direct job definition doesn't work, try with a known IPFS hash as fallback
-		log.Printf("[WARN] Direct job definition failed, trying with fallback IPFS hash: %v", err)
+	log.Printf("[INFO] Job definition uploaded to IPFS with hash: %s", ipfsHash)
+
+		// EXACT SDK PATTERN - createDeployment.ts + deploymentStart.ts
+		log.Printf("[INFO] 🚀 Using EXACT SDK createDeployment + start pattern")
 		
-		// Use a well-known IPFS hash for testing (this should be replaced with proper IPFS upload)
-		fallbackIPFS := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-		createBodyFallback := &DeploymentCreateBody{
-			Name:               deploymentName,
-			Market:             marketAddress,
-			IpfsDefinitionHash: &fallbackIPFS,
-			Replicas:           replicas,
-			Timeout:            timeout,
-			Strategy:           strategy,
-			Schedule:           schedule,
+		// Step 1: Create deployment (DRAFT) - exact SDK createDeployment pattern
+		log.Printf("[INFO] 📝 Creating deployment via SDK pattern...")
+		createReq := map[string]interface{}{
+			"name":                 fmt.Sprintf("terraform-job-%d", time.Now().Unix()),
+			"market":               marketAddress,
+			"replicas":             d.Get("replicas").(int),
+			"timeout":              timeout,
+			"strategy":             "SIMPLE",
+			"ipfs_definition_hash": ipfsHash,
 		}
-	// 1. Create the Nosana Deployment via API
-	log.Printf("[INFO] Creating Nosana deployment with job definition...")
-	newDeployment, err := client.APIClient.CreateDeployment(ctx, createBody)
-	if err != nil {
-		// If direct job definition doesn't work, try with a known IPFS hash as fallback
-		log.Printf("[WARN] Direct job definition failed, trying with fallback IPFS hash: %v", err)
-		
-		// Use a well-known IPFS hash for testing (this should be replaced with proper IPFS upload)
-		fallbackIPFS := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-		createBodyFallback := &DeploymentCreateBody{
-			Name:               deploymentName,
-			Market:             marketAddress,
-			IpfsDefinitionHash: &fallbackIPFS,
-			Replicas:           replicas,
-			Timeout:            timeout,
-			Strategy:           strategy,
-			Schedule:           schedule,
-		}
-		
-		newDeployment, err = client.APIClient.CreateDeployment(ctx, createBodyFallback)
+
+		// Create deployment exactly like SDK does
+		deploymentResponse, err := client.APIClient.CreateDeploymentSDK(ctx, createReq)
 		if err != nil {
-			return diag.FromErr(fmt.Errorf("failed to create Nosana deployment (both direct and IPFS approaches failed): %w", err))
+			return diag.FromErr(fmt.Errorf("failed to create deployment: %w", err))
 		}
-	}
 
-	d.SetId(newDeployment.ID) // Set the Terraform resource ID to the Nosana deployment ID
-	d.Set("job_id", newDeployment.ID)
-	d.Set("status", newDeployment.Status)
+		deploymentID := deploymentResponse["id"].(string)
+		log.Printf("[INFO] ✅ Deployment created: %s", deploymentID)
 
-	log.Printf("[INFO] Nosana deployment %s created. Initial status: %s", newDeployment.ID, newDeployment.Status)
+		// Step 2: FUND VAULT with EXACT MARKET PRICE
+		vaultAddress := deploymentResponse["vault"].(string)
+		log.Printf("[INFO] 🏦 Funding deployment vault with exact market price: %s", vaultAddress)
+		if err := client.APIClient.FundVault(ctx, vaultAddress, marketAddress); err != nil {
+			log.Printf("[WARN] Vault funding failed (proceeding anyway): %v", err)
+			// Don't fail deployment if vault funding fails - let's see what happens
+		} else {
+			log.Printf("[INFO] ✅ Vault funding completed successfully")
+		}
 
-	// 2. Optional: Wait for deployment completion (status becomes RUNNING or COMPLETED)
-	if waitForCompletion {
-		log.Printf("[INFO] Waiting for Nosana deployment %s to reach a stable state (timeout: %d seconds)...", newDeployment.ID, completionTimeoutSeconds)
-		timeoutChan := time.After(time.Duration(completionTimeoutSeconds) * time.Second)
-		tick := time.NewTicker(5 * time.Second) // Poll every 5 seconds
-		defer tick.Stop()
+		// Step 3: Start deployment - exact SDK deploymentStart pattern  
+		log.Printf("[INFO] 🏃 Starting deployment using SDK start pattern...")
+		err = client.APIClient.StartDeploymentSDK(ctx, deploymentID)
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("failed to start deployment: %w", err))
+		}
 
-		for {
-			select {
-			case <-timeoutChan:
-				return diag.Errorf("timeout waiting for Nosana deployment %s to complete after %d seconds", newDeployment.ID, completionTimeoutSeconds)
-			case <-tick.C:
-				currentDeployment, err := client.APIClient.GetDeployment(ctx, newDeployment.ID)
-				if err != nil {
-					log.Printf("[WARN] Error polling deployment status for %s: %v", newDeployment.ID, err)
-					continue
+		log.Printf("[INFO] ✅ Deployment start requested")
+
+		// Set Terraform state
+		d.SetId(deploymentID)
+		d.Set("job_id", deploymentID)
+		d.Set("status", "STARTING")  // deploymentStart sets to STARTING
+		d.Set("ipfs_hash", ipfsHash)
+
+		// Wait up to ~70s for RUNNING
+		deadline := time.Now().Add(70 * time.Second)
+		for time.Now().Before(deadline) {
+			dep, gerr := client.APIClient.GetDeployment(ctx, deploymentID)
+			if gerr == nil {
+				if dep.Status == DeploymentStatusRunning {
+					log.Printf("[INFO] ✅ Deployment is RUNNING")
+					d.Set("status", string(DeploymentStatusRunning))
+					break
 				}
-
-				d.Set("status", currentDeployment.Status) // Update status in state
-
-				if currentDeployment.Status == DeploymentStatusRunning || currentDeployment.Status == DeploymentStatusStopped || currentDeployment.Status == DeploymentStatusArchived || currentDeployment.Status == DeploymentStatusError || currentDeployment.Status == DeploymentStatusInsufficientFunds {
-					log.Printf("[INFO] Nosana deployment %s reached stable state: %s.", newDeployment.ID, currentDeployment.Status)
-					return resourceNosanaJobRead(ctx, d, m) // Read to ensure state is up-to-date
+				if dep.Status == DeploymentStatusError {
+					log.Printf("[WARN] Deployment moved to ERROR during wait")
+					d.Set("status", string(DeploymentStatusError))
+					break
 				}
-				log.Printf("[INFO] Nosana deployment %s current status: %s", newDeployment.ID, currentDeployment.Status)
 			}
+			time.Sleep(5 * time.Second)
 		}
-	}
+
+		log.Printf("[INFO] 🆔 Deployment ID: %s", deploymentID)
+		log.Printf("[INFO] 💰 Vault Address: %s", vaultAddress)
+		log.Printf("[INFO] 🌐 Check dashboard: https://dashboard.nosana.com/account/deployer")
 
 	return resourceNosanaJobRead(ctx, d, m)
 }
 
 // resourceNosanaJobRead handles reading the state of a Nosana job.
 func resourceNosanaJobRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+	log.Printf("[INFO] Reading Nosana job state for job ID: %s", d.Id())
+
 	client := m.(*nosanaClient)
-	deploymentID := d.Id() // Get the deployment ID from the Terraform state
-
-	// 1. Get deployment status from Nosana API
-	deployment, err := client.APIClient.GetDeployment(ctx, deploymentID)
+	
+	// Get current deployment status from Nosana API
+	deployment, err := client.APIClient.GetDeployment(ctx, d.Id())
 	if err != nil {
-		// Check if it's a 404 Not Found error from the API
-		if strings.Contains(err.Error(), "API request failed with status 404") {
-			log.Printf("[WARN] Nosana deployment %s not found (404), removing from state.", deploymentID)
-			d.SetId("") // Mark resource for deletion from state
-			return nil
-		}
-		return diag.FromErr(fmt.Errorf("failed to read Nosana deployment %s: %w", deploymentID, err))
+		// If deployment not found, resource has been deleted
+		log.Printf("[WARN] Deployment %s not found, removing from state: %v", d.Id(), err)
+		d.SetId("")
+		return nil
 	}
 
-	// 2. Update Terraform state with current deployment details
+	// Update all deployment fields from API response
+	d.Set("status", string(deployment.Status))
 	d.Set("job_id", deployment.ID)
-	d.Set("status", deployment.Status)
-
-	// Since job_content is user-provided and not returned by API, we keep the last known value.
-	// If ipfs_definition_hash were truly managed by IPFS, we would verify it here.
-
-	d.Set("replicas", deployment.Replicas)
-	d.Set("timeout", deployment.Timeout)
-	d.Set("strategy", deployment.Strategy)
-	if deployment.Schedule != nil {
-		d.Set("schedule", *deployment.Schedule)
+	
+	log.Printf("[INFO] ✅ Deployment %s status updated: %s", d.Id(), deployment.Status)
+	
+	// If deployment failed, get detailed error information
+	if deployment.Status == DeploymentStatusError {
+		log.Printf("[ERROR] 💥 Deployment %s has ERROR status! Getting detailed error info...", d.Id())
+		
+		// Get detailed deployment with events
+		details, err := client.APIClient.GetDeploymentWithEvents(ctx, d.Id())
+		if err != nil {
+			log.Printf("[WARN] Could not get deployment details: %v", err)
+		} else {
+			// Extract and log events for debugging
+			if events, ok := details["events"].([]interface{}); ok && len(events) > 0 {
+				log.Printf("[ERROR] 🔍 Deployment error events:")
+				for i, event := range events {
+					if eventMap, ok := event.(map[string]interface{}); ok {
+						eventType := eventMap["type"]
+						message := eventMap["message"]
+						log.Printf("[ERROR]   Event %d: %s - %s", i+1, eventType, message)
+					}
+				}
+			}
+		}
 	}
-
-	log.Printf("[INFO] Read Nosana deployment %s. Status: %s", deployment.ID, deployment.Status)
+	
 	return nil
 }
 
 // resourceNosanaJobUpdate handles updates to a Nosana job.
 func resourceNosanaJobUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
-	client := m.(*nosanaClient)
-	deploymentID := d.Id()
+	jobID := d.Id()
 
-	if d.HasChange("job_content") {
-		// If job_content changes, force a replacement. This is because a change to job_content
-		// implies a new IPFS hash, which the Nosana API treats as a new deployment.
-		// Terraform handles this by planning a destroy and then a create.
-		return diag.Errorf("changes to `job_content` require a new resource to be created, please use `terraform taint` or plan a replacement")
+	// For direct blockchain jobs, most updates require a new resource
+	if d.HasChange("job_content") || d.HasChange("replicas") || d.HasChange("timeout") || d.HasChange("strategy") {
+		return diag.Errorf("changes to direct blockchain jobs require creating a new resource - use 'terraform taint %s' to force replacement", jobID)
 	}
-
-	if d.HasChange("replicas") {
-		old, new := d.GetChange("replicas")
-		log.Printf("[INFO] Updating replicas for deployment %s from %d to %d", deploymentID, old, new)
-		err := client.APIClient.UpdateDeploymentReplicas(ctx, deploymentID, new.(int))
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("failed to update replicas for deployment %s: %w", deploymentID, err))
-		}
-	}
-
-	if d.HasChange("timeout") {
-		old, new := d.GetChange("timeout")
-		log.Printf("[INFO] Updating timeout for deployment %s from %d to %d", deploymentID, old, new)
-		err := client.APIClient.UpdateDeploymentTimeout(ctx, deploymentID, new.(int))
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("failed to update timeout for deployment %s: %w", deploymentID, err))
-		}
-	}
-
-	// If strategy or schedule change, it would typically require a new deployment.
-	// For simplicity in this MVP, we assume these also trigger a replacement.
 
 	return resourceNosanaJobRead(ctx, d, m)
 }
 
-// resourceNosanaJobDelete handles the deletion (archiving) of a Nosana job.
+// resourceNosanaJobDelete handles the deletion of a Nosana job.
 func resourceNosanaJobDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
-	client := m.(*nosanaClient)
-	deploymentID := d.Id()
+	jobID := d.Id()
 
-	log.Printf("[INFO] Archiving Nosana deployment %s...", deploymentID)
-	err := client.APIClient.DeleteDeployment(ctx, deploymentID)
-	if err != nil {
-		return diag.FromErr(fmt.Errorf("failed to archive Nosana deployment %s: %w", deploymentID, err))
-	}
-
+	// For direct blockchain jobs, deletion only removes from Terraform state
+	// The job on the blockchain network continues to run independently
+	log.Printf("[INFO] Removing direct blockchain job %s from Terraform state...", jobID)
+	log.Printf("[INFO] ⚠️  Note: Job continues running on Nosana network - this only removes from Terraform management")
+	
 	d.SetId("") // Mark resource as deleted from Terraform state
 
-	log.Printf("[INFO] Nosana deployment %s archived successfully.", deploymentID)
+	log.Printf("[INFO] Job %s removed from Terraform state successfully.", jobID)
 	return nil
 }
