@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     nosana = {
-      source = "hoomandigital/nosana"
+      source = "localhost/hoomandigital/nosana"
     }
   }
 }
@@ -19,9 +19,16 @@ variable "market_address" {
   default     = "7AtiXMSH6R1jjBxrcYjehCkkSF7zvYWte63gwEDBcGHq"
 }
 
+variable "rpc_url" {
+  description = "Solana RPC URL for blockchain transactions (use a fast RPC for better reliability)"
+  type        = string
+  default     = ""
+}
+
 provider "nosana" {
   private_key    = var.private_key
   market_address = var.market_address
+  rpc_url        = var.rpc_url
 }
 
 resource "nosana_job" "ollama_server" {
@@ -60,9 +67,9 @@ resource "nosana_job" "ollama_server" {
 
   replicas                   = 1
   strategy                   = "SIMPLE"
-  timeout                    = 600
-  wait_for_completion        = false
-  completion_timeout_seconds = 60
+  timeout                    = 1200  # Increased timeout for blockchain transactions
+  wait_for_completion        = false # Quick deployment 
+  max_retries                = 15      # Increased retries with aggressive restart strategy
 }
 
 output "job_id" {

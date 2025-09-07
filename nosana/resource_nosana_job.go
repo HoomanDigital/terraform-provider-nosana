@@ -54,6 +54,12 @@ func resourceNosanaJob() *schema.Resource {
 				Description: "Cron expression for SCHEDULED strategy.",
 				// TODO: Add cron expression validation
 			},
+			"auto_start": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     true,
+				Description: "If true, automatically start the deployment after creation. If false, leaves it in DRAFT status.",
+			},
 			"wait_for_completion": {
 				Type:        schema.TypeBool,
 				Optional:    true,
@@ -67,6 +73,12 @@ func resourceNosanaJob() *schema.Resource {
 				Description:  "Maximum time (in seconds) to wait for deployment completion.",
 				ValidateFunc: validation.IntAtLeast(1),
 			},
+			"max_retries": {
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Default:     8, // Increased to handle 60s timeout better
+				Description: "Maximum number of retry attempts for deployment start failures",
+			},
 			// Attributes that will be stored in the Terraform state after creation
 			"job_id": {
 				Type:        schema.TypeString,
@@ -76,8 +88,18 @@ func resourceNosanaJob() *schema.Resource {
 			"status": {
 				Type:        schema.TypeString,
 				Computed:    true,
-				Description: "The current status of the Nosana deployment.",
+				Description: "The current status of the Nosana job (QUEUED, RUNNING, COMPLETED, etc.).",
 			},
+		"ipfs_hash": {
+			Type:        schema.TypeString,
+			Computed:    true,
+			Description: "The IPFS hash of the job definition.",
+		},
+		"deployment_id": {
+			Type:        schema.TypeString,
+			Computed:    true,
+			Description: "The deployment ID from the Nosana API.",
+		},
 		},
 		Importer: &schema.ResourceImporter{
 			StateContext: schema.ImportStatePassthroughContext, // For MVP, basic import functionality
@@ -113,65 +135,64 @@ func resourceNosanaJobCreate(ctx context.Context, d *schema.ResourceData, m inte
 		return diag.FromErr(fmt.Errorf("failed to parse job_content JSON: %w", err))
 	}
 
-	// Try approach 1: Send job definition directly (let API handle IPFS internally)
+	// Upload job definition to IPFS
+	log.Printf("[INFO] Uploading job definition to IPFS...")
+	ipfsHash, err := client.APIClient.UploadToIPFS(ctx, jobContent)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("failed to upload job definition to IPFS: %w", err))
+	}
+
+	log.Printf("[INFO] Job definition uploaded to IPFS with hash: %s", ipfsHash)
+
+	// Create deployment with IPFS hash
 	createBody := &DeploymentCreateBody{
-		Name:          deploymentName,
-		Market:        marketAddress,
-		JobDefinition: &jobContent,
-		Replicas:      replicas,
-		Timeout:       timeout,
-		Strategy:      strategy,
-		Schedule:      schedule,
+		Name:               deploymentName,
+		Market:             marketAddress,
+		IpfsDefinitionHash: &ipfsHash,
+		Replicas:           replicas,
+		Timeout:            timeout,
+		Strategy:           strategy,
+		Schedule:           schedule,
 	}
 
-	// 1. Create the Nosana Deployment via API
-	log.Printf("[INFO] Creating Nosana deployment with job definition...")
+	// Create the Nosana Deployment via API
+	log.Printf("[INFO] Creating Nosana deployment with IPFS hash: %s", ipfsHash)
 	newDeployment, err := client.APIClient.CreateDeployment(ctx, createBody)
 	if err != nil {
-		// If direct job definition doesn't work, try with a known IPFS hash as fallback
-		log.Printf("[WARN] Direct job definition failed, trying with fallback IPFS hash: %v", err)
-		
-		// Use a well-known IPFS hash for testing (this should be replaced with proper IPFS upload)
-		fallbackIPFS := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-		createBodyFallback := &DeploymentCreateBody{
-			Name:               deploymentName,
-			Market:             marketAddress,
-			IpfsDefinitionHash: &fallbackIPFS,
-			Replicas:           replicas,
-			Timeout:            timeout,
-			Strategy:           strategy,
-			Schedule:           schedule,
-		}
-	// 1. Create the Nosana Deployment via API
-	log.Printf("[INFO] Creating Nosana deployment with job definition...")
-	newDeployment, err := client.APIClient.CreateDeployment(ctx, createBody)
-	if err != nil {
-		// If direct job definition doesn't work, try with a known IPFS hash as fallback
-		log.Printf("[WARN] Direct job definition failed, trying with fallback IPFS hash: %v", err)
-		
-		// Use a well-known IPFS hash for testing (this should be replaced with proper IPFS upload)
-		fallbackIPFS := "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-		createBodyFallback := &DeploymentCreateBody{
-			Name:               deploymentName,
-			Market:             marketAddress,
-			IpfsDefinitionHash: &fallbackIPFS,
-			Replicas:           replicas,
-			Timeout:            timeout,
-			Strategy:           strategy,
-			Schedule:           schedule,
-		}
-		
-		newDeployment, err = client.APIClient.CreateDeployment(ctx, createBodyFallback)
-		if err != nil {
-			return diag.FromErr(fmt.Errorf("failed to create Nosana deployment (both direct and IPFS approaches failed): %w", err))
-		}
+		return diag.FromErr(fmt.Errorf("failed to create Nosana deployment: %w", err))
 	}
 
-	d.SetId(newDeployment.ID) // Set the Terraform resource ID to the Nosana deployment ID
+	log.Printf("[INFO] Nosana deployment %s created with status: %s", newDeployment.ID, newDeployment.Status)
+
+	// Now START the deployment to transition from DRAFT → STARTING → RUNNING
+	maxRetries := d.Get("max_retries").(int)
+	log.Printf("[INFO] 🚀 Starting deployment %s (DRAFT → STARTING → RUNNING)...", newDeployment.ID)
+	
+	startedDeployment, err := client.APIClient.StartDeploymentWithRetry(ctx, newDeployment.ID, maxRetries)
+	if err != nil {
+		// If start fails, still set deployment info so user can debug
+		d.SetId(newDeployment.ID)
+		d.Set("job_id", newDeployment.ID)
+		d.Set("status", "DRAFT")
+		d.Set("ipfs_hash", ipfsHash)
+		d.Set("deployment_id", newDeployment.ID)
+		
+		return diag.FromErr(fmt.Errorf("deployment created but failed to start: %w", err))
+	}
+	
+	log.Printf("[INFO] ✅ Deployment %s started successfully! Status: %s", startedDeployment.ID, startedDeployment.Status)
+	
+	// Set Terraform state with the started deployment
+	d.SetId(newDeployment.ID)
 	d.Set("job_id", newDeployment.ID)
-	d.Set("status", newDeployment.Status)
-
-	log.Printf("[INFO] Nosana deployment %s created. Initial status: %s", newDeployment.ID, newDeployment.Status)
+	d.Set("status", string(startedDeployment.Status))
+	d.Set("ipfs_hash", ipfsHash)
+	d.Set("deployment_id", newDeployment.ID)
+	
+	log.Printf("[INFO] 🎉 DEPLOYMENT STARTED ON NOSANA NETWORK!")
+	log.Printf("[INFO] 🆔 Deployment ID: %s", newDeployment.ID)
+	log.Printf("[INFO] 📊 Status: %s", startedDeployment.Status)
+	log.Printf("[INFO] 🌐 Check your deployment at dashboard.nosana.com/account/deployer")
 
 	// 2. Optional: Wait for deployment completion (status becomes RUNNING or COMPLETED)
 	if waitForCompletion {
@@ -179,6 +200,9 @@ func resourceNosanaJobCreate(ctx context.Context, d *schema.ResourceData, m inte
 		timeoutChan := time.After(time.Duration(completionTimeoutSeconds) * time.Second)
 		tick := time.NewTicker(5 * time.Second) // Poll every 5 seconds
 		defer tick.Stop()
+
+		retryCount := 0
+		maxAutoRetries := 3 // Allow up to 3 automatic restarts
 
 		for {
 			select {
@@ -192,6 +216,43 @@ func resourceNosanaJobCreate(ctx context.Context, d *schema.ResourceData, m inte
 				}
 
 				d.Set("status", currentDeployment.Status) // Update status in state
+
+				// Check if deployment failed with blockchain timeout and auto-restart if possible
+				if currentDeployment.Status == DeploymentStatusError && retryCount < maxAutoRetries {
+					log.Printf("[WARN] Deployment %s failed with ERROR status, checking for blockchain timeout...", newDeployment.ID)
+					
+					// Check events for blockchain timeout
+					hasBlockchainTimeout := false
+					for _, event := range currentDeployment.Events {
+						if strings.Contains(event.Message, "Transaction was not confirmed") || 
+						   strings.Contains(event.Message, "transaction timeout") ||
+						   event.Type == "JOB_LIST_ERROR" {
+							hasBlockchainTimeout = true
+							log.Printf("[WARN] Found blockchain timeout: %s", event.Message)
+							break
+						}
+					}
+
+					if hasBlockchainTimeout {
+						retryCount++
+						log.Printf("[INFO] Attempting automatic restart of deployment %s (attempt %d/%d)...", newDeployment.ID, retryCount, maxAutoRetries)
+						
+						// Wait before restart attempt
+						time.Sleep(45 * time.Second)
+						
+						// Try to restart the deployment
+						_, err := client.APIClient.StartDeploymentWithRetry(ctx, newDeployment.ID, 3)
+						if err != nil {
+							log.Printf("[WARN] Auto-restart attempt %d failed: %v", retryCount, err)
+							if retryCount >= maxAutoRetries {
+								return diag.Errorf("deployment %s failed after %d restart attempts due to blockchain timeouts", newDeployment.ID, maxAutoRetries)
+							}
+						} else {
+							log.Printf("[INFO] Auto-restart attempt %d successful, continuing to monitor...", retryCount)
+						}
+						continue
+					}
+				}
 
 				if currentDeployment.Status == DeploymentStatusRunning || currentDeployment.Status == DeploymentStatusStopped || currentDeployment.Status == DeploymentStatusArchived || currentDeployment.Status == DeploymentStatusError || currentDeployment.Status == DeploymentStatusInsufficientFunds {
 					log.Printf("[INFO] Nosana deployment %s reached stable state: %s.", newDeployment.ID, currentDeployment.Status)
