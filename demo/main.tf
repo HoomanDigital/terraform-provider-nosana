@@ -10,12 +10,7 @@ variable "private_key" {
   description = "Your Solana wallet private key"
   type        = string
   sensitive   = true
-}
-
-variable "network" {
-  description = "The Nosana network to connect to"
-  type        = string
-  default     = "mainnet"
+  default     = ""
 }
 
 variable "market_address" {
@@ -26,12 +21,11 @@ variable "market_address" {
 
 provider "nosana" {
   private_key    = var.private_key
-  network        = var.network
   market_address = var.market_address
 }
 
 resource "nosana_job" "ollama_server" {
-  job_definition = jsonencode({
+  job_content = jsonencode({
     "ops": [
       {
         "id": "oneClickLLM",
@@ -64,7 +58,10 @@ resource "nosana_job" "ollama_server" {
     "version": "0.1"
   })
 
-  wait_for_completion = true
+  replicas                   = 1
+  strategy                   = "SIMPLE"
+  timeout                    = 600
+  wait_for_completion        = true
   completion_timeout_seconds = 60
 }
 
