@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     nosana = {
-      source = "localhost/hoomandigital/nosana"
+      source = "hoomandigital/nosana"
     }
   }
 }
@@ -61,7 +61,7 @@ resource "nosana_job" "ollama_server" {
   replicas                   = 1
   strategy                   = "SIMPLE"
   timeout                    = 600
-  wait_for_completion        = true
+  wait_for_completion        = false
   completion_timeout_seconds = 60
 }
 
