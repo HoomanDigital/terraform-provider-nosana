@@ -35,31 +35,17 @@ resource "nosana_job" "ollama_server" {
   job_content = jsonencode({
     "ops": [
       {
-        "id": "oneClickLLM",
+        "id": "Hello-world",
         "args": {
-          "env": {
-            "PORT": "8000",
-            "BLOCK_SIZE": "8",
-            "MODEL_NAME": "mistral",
-            "SWAP_SPACE": "4",
-            "MEMORY_LIMIT": "NAN",
-            "QUANTIZATION": "NAN",
-            "MAX_MODEL_LEN": "NAN",
-            "PARAMETER_SIZE": "34B",
-            "ENABLE_STREAMING": "false",
-            "SERVED_MODEL_NAME": "mistral",
-            "TENSOR_PARALLEL_SIZE": "1",
-            "GPU_MEMORY_UTILIZATION": "0.9"
-          },
+          "cmd": "echo hello world",
           "gpu": true,
-          "image": "docker.io/hoomanhq/oneclickllm:stabllama",
-          "expose": 8000
+          "image": "ubuntu"
         },
         "type": "container/run"
       }
     ],
     "meta": {
-      "trigger": "terraform-demo"
+      "trigger": "dashboard"
     },
     "type": "container",
     "version": "0.1"
@@ -67,9 +53,9 @@ resource "nosana_job" "ollama_server" {
 
   replicas                   = 1
   strategy                   = "SIMPLE"
-  timeout                    = 1200  # Increased timeout for blockchain transactions
-  wait_for_completion        = false # Quick deployment 
-  max_retries                = 15      # Increased retries with aggressive restart strategy
+  timeout                    = 600
+  wait_for_completion        = false 
+  max_retries                = 8
 }
 
 output "job_id" {
